@@ -37,8 +37,8 @@ ESPN_STANDINGS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/m
 ESPN_TEAMS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams"
 
 # Update schedule
-UPDATE_INTERVAL_NORMAL_MINUTES = 60 * 12  # twice daily outside March
-UPDATE_INTERVAL_MARCH_MINUTES = 60  # hourly in March
+# Normal: daily at 8am (handled by CronTrigger in scheduler.py)
+# March: hourly (handled by IntervalTrigger in scheduler.py)
 
 # Lock/Bubble thresholds (ranking position)
 LOCK_THRESHOLD = 30       # top 30 in NET = likely locked

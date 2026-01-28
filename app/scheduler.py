@@ -1,17 +1,17 @@
 """
 Scheduler for automatic bracket updates.
 
-- Normal season: updates twice daily (every 12 hours)
-- March: updates every hour
+- Normal season: once daily at 8:00 AM
+- March: every hour
 """
 
 import logging
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.config import UPDATE_INTERVAL_NORMAL_MINUTES, UPDATE_INTERVAL_MARCH_MINUTES
 from app.update import run_update
 
 logger = logging.getLogger(__name__)
@@ -19,33 +19,37 @@ logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 
 
-def get_update_interval():
-    """Return update interval in minutes based on current month."""
-    now = datetime.now()
-    if now.month == 3:
-        return UPDATE_INTERVAL_MARCH_MINUTES
-    return UPDATE_INTERVAL_NORMAL_MINUTES
-
-
 def start_scheduler():
     """Start the background scheduler."""
-    interval = get_update_interval()
-    logger.info(f"Starting scheduler with {interval}-minute interval")
+    now = datetime.now()
 
-    scheduler.add_job(
-        func=run_update,
-        trigger=IntervalTrigger(minutes=interval),
-        id="bracket_update",
-        name="Update bracket projection",
-        replace_existing=True,
-    )
+    if now.month == 3:
+        # March: update every hour
+        logger.info("March mode: scheduling updates every hour")
+        scheduler.add_job(
+            func=run_update,
+            trigger=IntervalTrigger(hours=1),
+            id="bracket_update",
+            name="Update bracket projection (hourly)",
+            replace_existing=True,
+        )
+    else:
+        # Normal season: once daily at 8:00 AM
+        logger.info("Normal mode: scheduling daily update at 8:00 AM")
+        scheduler.add_job(
+            func=run_update,
+            trigger=CronTrigger(hour=8, minute=0),
+            id="bracket_update",
+            name="Update bracket projection (daily 8am)",
+            replace_existing=True,
+        )
 
-    # Also check monthly if we need to change the interval (for March)
+    # Check on the 1st of each month if we need to switch modes
     scheduler.add_job(
-        func=_check_interval,
-        trigger=IntervalTrigger(hours=6),
-        id="interval_check",
-        name="Check if update interval needs changing",
+        func=_check_mode,
+        trigger=CronTrigger(day=1, hour=0, minute=5),
+        id="mode_check",
+        name="Check if schedule mode needs changing",
         replace_existing=True,
     )
 
@@ -53,18 +57,25 @@ def start_scheduler():
     logger.info("Scheduler started")
 
 
-def _check_interval():
-    """Adjust update frequency when March starts."""
-    new_interval = get_update_interval()
+def _check_mode():
+    """Switch between daily and hourly mode when March starts/ends."""
+    now = datetime.now()
     job = scheduler.get_job("bracket_update")
-    if job:
-        current_interval = job.trigger.interval.total_seconds() / 60
-        if abs(current_interval - new_interval) > 1:
-            logger.info(f"Adjusting update interval from {current_interval}m to {new_interval}m")
-            scheduler.reschedule_job(
-                "bracket_update",
-                trigger=IntervalTrigger(minutes=new_interval),
-            )
+    if not job:
+        return
+
+    if now.month == 3:
+        logger.info("Switching to March hourly mode")
+        scheduler.reschedule_job(
+            "bracket_update",
+            trigger=IntervalTrigger(hours=1),
+        )
+    else:
+        logger.info("Switching to daily 8am mode")
+        scheduler.reschedule_job(
+            "bracket_update",
+            trigger=CronTrigger(hour=8, minute=0),
+        )
 
 
 def stop_scheduler():

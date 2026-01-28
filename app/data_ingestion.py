@@ -1,21 +1,17 @@
-"""Data ingestion from ESPN APIs and web sources."""
+"""Data ingestion from ESPN APIs."""
 
-import json
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import requests
-from bs4 import BeautifulSoup
 
 from app.config import (
     DATABASE_PATH,
     ESPN_SCOREBOARD_URL,
     ESPN_TEAMS_URL,
-    ALL_CONFERENCES,
-    POWER_CONFERENCES,
 )
-from app.models import Team, GameResult
+from app.models import Team
 
 logger = logging.getLogger(__name__)
 
@@ -33,120 +29,132 @@ CONFERENCE_IDS = {
 }
 
 
-def fetch_espn_teams() -> list[Team]:
-    """Fetch all D1 teams from ESPN API."""
-    teams = []
+def _get_stat(stats_list: list, stat_type: str, default=None):
+    """Extract a stat value from ESPN's stats array by its 'type' field."""
+    for s in stats_list:
+        if s.get("type") == stat_type:
+            return s.get("displayValue", s.get("value", default))
+    return default
+
+
+def _parse_record(record_str: str) -> tuple[int, int]:
+    """Parse a record string like '20-5' into (wins, losses)."""
+    if not record_str or not isinstance(record_str, str) or "-" not in record_str:
+        return 0, 0
     try:
-        # Fetch teams page by page
-        page = 1
-        while True:
-            resp = requests.get(
-                ESPN_TEAMS_URL,
-                params={"limit": 100, "page": page},
-                timeout=30,
+        parts = record_str.split("-")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return 0, 0
+
+
+def fetch_conference_standings() -> dict:
+    """
+    Fetch conference standings for all conferences.
+    Returns dict of conference_name -> list of team dicts sorted by standing.
+    """
+    standings = {}
+
+    for conf_name, conf_id in CONFERENCE_IDS.items():
+        try:
+            url = (
+                "https://site.api.espn.com/apis/v2/sports/basketball/"
+                "mens-college-basketball/standings"
             )
+            resp = requests.get(url, params={"group": conf_id}, timeout=20)
             resp.raise_for_status()
             data = resp.json()
 
-            sports = data.get("sports", [{}])
-            if not sports:
-                break
-            leagues = sports[0].get("leagues", [{}])
-            if not leagues:
-                break
-            league_teams = leagues[0].get("teams", [])
+            # Standings entries are at data.standings.entries[]
+            entries = data.get("standings", {}).get("entries", [])
 
-            if not league_teams:
-                break
+            conf_teams = []
+            for entry in entries:
+                team_info = entry.get("team", {})
+                team_id = int(team_info.get("id", 0))
+                team_name = team_info.get("displayName",
+                            f"{team_info.get('location', '')} {team_info.get('name', '')}".strip())
 
-            for entry in league_teams:
-                t = entry.get("team", {})
-                team_id = int(t.get("id", 0))
-                name = t.get("displayName", t.get("name", "Unknown"))
-                # Conference info may need separate lookup
-                teams.append(Team(
-                    id=team_id,
-                    name=name,
-                    conference="Unknown",
-                ))
+                stats = entry.get("stats", [])
 
-            # Check if there are more pages
-            total = data.get("count", 0)
-            if page * 100 >= total:
-                break
-            page += 1
+                # Extract key stats by 'type' field
+                overall_record = _get_stat(stats, "total", "0-0")
+                wins_val = _get_stat(stats, "wins", 0)
+                losses_val = _get_stat(stats, "losses", 0)
+                playoff_seed = _get_stat(stats, "playoffseed", 99)
+                conf_win_pct = _get_stat(stats, "leaguewinpercent", 0)
 
-    except Exception as e:
-        logger.error(f"Error fetching ESPN teams: {e}")
+                # Parse wins/losses - prefer numeric stats, fall back to record string
+                try:
+                    wins = int(float(wins_val))
+                    losses = int(float(losses_val))
+                except (ValueError, TypeError):
+                    wins, losses = _parse_record(str(overall_record))
 
-    return teams
+                try:
+                    standing = int(float(playoff_seed))
+                except (ValueError, TypeError):
+                    standing = 99
 
+                # Get conference record from the "vsconf_*" stats or compute from pct
+                try:
+                    conf_pct = float(conf_win_pct)
+                except (ValueError, TypeError):
+                    conf_pct = 0.0
 
-def fetch_team_details_from_espn(team_id: int) -> dict:
-    """Fetch detailed info for a single team."""
-    try:
-        url = f"{ESPN_TEAMS_URL}/{team_id}"
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        logger.error(f"Error fetching team {team_id}: {e}")
-        return {}
+                # Try to get explicit conference wins/losses
+                cw_val = _get_stat(stats, "leaguewins", None)
+                cl_val = _get_stat(stats, "leaguelosses", None)
+                if cw_val is not None and cl_val is not None:
+                    try:
+                        cw = int(float(cw_val))
+                        cl = int(float(cl_val))
+                    except (ValueError, TypeError):
+                        cw, cl = 0, 0
+                else:
+                    # Estimate from win pct and total conf games played
+                    # (rough estimate: assume ~18 conference games)
+                    est_games = max(1, round(wins + losses - 12))  # non-conf ~ 12
+                    cw = round(conf_pct * est_games)
+                    cl = est_games - cw
 
-
-def fetch_scoreboard(date_str: str = None) -> list[dict]:
-    """Fetch game scores for a given date (YYYYMMDD format)."""
-    params = {}
-    if date_str:
-        params["dates"] = date_str
-    params["limit"] = 200
-    params["groups"] = 50  # D1 men's basketball
-
-    try:
-        resp = requests.get(ESPN_SCOREBOARD_URL, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        events = data.get("events", [])
-        games = []
-        for event in events:
-            competitions = event.get("competitions", [{}])
-            for comp in competitions:
-                competitors = comp.get("competitors", [])
-                if len(competitors) < 2:
-                    continue
-                home = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0])
-                away = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1])
-
-                status = comp.get("status", {}).get("type", {}).get("name", "")
-
-                games.append({
-                    "date": event.get("date", ""),
-                    "home_team_id": int(home.get("id", 0)),
-                    "home_team_name": home.get("team", {}).get("displayName", ""),
-                    "away_team_id": int(away.get("id", 0)),
-                    "away_team_name": away.get("team", {}).get("displayName", ""),
-                    "home_score": int(home.get("score", 0)),
-                    "away_score": int(away.get("score", 0)),
-                    "status": status,
-                    "is_neutral": comp.get("neutralSite", False),
-                    "is_conference": comp.get("conferenceCompetition", False),
+                conf_teams.append({
+                    "team_id": team_id,
+                    "team_name": team_name,
+                    "conference": conf_name,
+                    "wins": wins,
+                    "losses": losses,
+                    "conf_wins": cw,
+                    "conf_losses": cl,
+                    "standing": standing,
                 })
-        return games
-    except Exception as e:
-        logger.error(f"Error fetching scoreboard: {e}")
-        return []
+
+            # Sort by standing (playoffseed)
+            conf_teams.sort(key=lambda t: t["standing"])
+            standings[conf_name] = conf_teams
+            logger.info(f"  {conf_name}: {len(conf_teams)} teams")
+
+        except Exception as e:
+            logger.warning(f"Could not fetch standings for {conf_name} (group {conf_id}): {e}")
+
+    return standings
 
 
 def fetch_rankings() -> dict:
-    """Fetch current rankings (AP, NET-like proxy via ESPN BPI)."""
+    """
+    Fetch AP Top 25 and Coaches Poll rankings.
+    Returns dict of team_id -> {poll_name: rank, "record": str, "name": str}
+    """
     rankings = {}
     try:
         resp = requests.get(
-            "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/rankings",
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/"
+            "mens-college-basketball/rankings",
             timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
+
         for ranking_set in data.get("rankings", []):
             poll_name = ranking_set.get("name", "")
             for entry in ranking_set.get("ranks", []):
@@ -154,100 +162,23 @@ def fetch_rankings() -> dict:
                 team_id = int(team.get("id", 0))
                 rank = entry.get("current", 999)
                 record_str = entry.get("recordSummary", "0-0")
+                team_name = f"{team.get('location', '')} {team.get('name', '')}".strip()
+
                 if team_id not in rankings:
                     rankings[team_id] = {}
                 rankings[team_id][poll_name] = rank
                 rankings[team_id]["record"] = record_str
-                rankings[team_id]["name"] = team.get("displayName", "")
+                rankings[team_id]["name"] = team_name
+
+        logger.info(f"Fetched rankings: {len(rankings)} teams across polls")
     except Exception as e:
         logger.error(f"Error fetching rankings: {e}")
     return rankings
 
 
-def fetch_conference_standings() -> dict:
-    """Fetch conference standings to determine projected auto-bids."""
-    standings = {}
-    for conf_name, conf_id in CONFERENCE_IDS.items():
-        try:
-            url = (
-                "https://site.api.espn.com/apis/v2/sports/basketball/"
-                "mens-college-basketball/standings"
-            )
-            resp = requests.get(
-                url,
-                params={"group": conf_id},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-            conf_standings = []
-            for child in data.get("children", []):
-                for entry in child.get("standings", {}).get("entries", []):
-                    team_info = entry.get("team", {})
-                    team_id = int(team_info.get("id", 0))
-                    stats = {s["name"]: s["value"] for s in entry.get("stats", [])}
-
-                    overall_record = stats.get("overall", "0-0")
-                    conf_record = stats.get("vs. Conf.", "0-0")
-
-                    wins, losses = 0, 0
-                    if isinstance(overall_record, str) and "-" in overall_record:
-                        parts = overall_record.split("-")
-                        wins, losses = int(parts[0]), int(parts[1])
-
-                    cw, cl = 0, 0
-                    if isinstance(conf_record, str) and "-" in conf_record:
-                        parts = conf_record.split("-")
-                        cw, cl = int(parts[0]), int(parts[1])
-
-                    conf_standings.append({
-                        "team_id": team_id,
-                        "team_name": team_info.get("displayName", ""),
-                        "conference": conf_name,
-                        "wins": wins,
-                        "losses": losses,
-                        "conf_wins": cw,
-                        "conf_losses": cl,
-                        "standing": len(conf_standings) + 1,
-                    })
-
-            standings[conf_name] = conf_standings
-        except Exception as e:
-            logger.warning(f"Could not fetch standings for {conf_name}: {e}")
-
-    return standings
-
-
-def fetch_bpi_rankings() -> list[dict]:
-    """Fetch ESPN BPI rankings as a proxy for NET rankings."""
-    teams = []
-    try:
-        resp = requests.get(
-            "https://site.api.espn.com/apis/site/v2/sports/basketball/"
-            "mens-college-basketball/rankings",
-            params={"type": 2},  # BPI
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        for ranking_set in data.get("rankings", []):
-            for entry in ranking_set.get("ranks", []):
-                team = entry.get("team", {})
-                teams.append({
-                    "team_id": int(team.get("id", 0)),
-                    "name": team.get("displayName", ""),
-                    "ranking": entry.get("current", 999),
-                    "record": entry.get("recordSummary", "0-0"),
-                })
-    except Exception as e:
-        logger.error(f"Error fetching BPI: {e}")
-    return teams
-
-
 def build_team_database() -> list[Team]:
     """
-    Build a comprehensive team database by combining multiple data sources.
+    Build a comprehensive team database by combining ESPN data sources.
     Returns a list of Team objects with ratings and records populated.
     """
     teams_dict = {}
@@ -255,6 +186,7 @@ def build_team_database() -> list[Team]:
     # 1. Get conference standings (primary source for records + conf membership)
     logger.info("Fetching conference standings...")
     standings = fetch_conference_standings()
+    total_teams = 0
     for conf_name, conf_teams in standings.items():
         for i, ct in enumerate(conf_teams):
             tid = ct["team_id"]
@@ -267,34 +199,40 @@ def build_team_database() -> list[Team]:
                 conf_wins=ct["conf_wins"],
                 conf_losses=ct["conf_losses"],
                 conference_standing=ct["standing"],
-                is_conference_champ=(i == 0),  # #1 in standings = projected champ
+                is_conference_champ=(ct["standing"] == 1),
             )
+            total_teams += 1
 
-    # 2. Overlay rankings data
+    logger.info(f"Loaded {total_teams} teams from {len(standings)} conferences")
+
+    if total_teams == 0:
+        logger.error("No teams loaded from standings! API may be down.")
+        return []
+
+    # 2. Overlay rankings data (AP + Coaches)
     logger.info("Fetching rankings...")
     rankings = fetch_rankings()
+    ranked_count = 0
     for tid, rank_data in rankings.items():
         if tid in teams_dict:
-            # Use AP poll ranking as a proxy; real system would use NET
             for poll_name, rank_val in rank_data.items():
-                if poll_name in ("AP Top 25", "AP Poll"):
-                    teams_dict[tid].net_ranking = min(teams_dict[tid].net_ranking, rank_val)
-                if poll_name in ("Coaches Poll",):
-                    teams_dict[tid].kenpom_ranking = min(teams_dict[tid].kenpom_ranking, rank_val)
+                if poll_name in ("record", "name"):
+                    continue
+                if not isinstance(rank_val, (int, float)):
+                    continue
+                if "AP" in poll_name:
+                    teams_dict[tid].net_ranking = min(teams_dict[tid].net_ranking, int(rank_val))
+                    ranked_count += 1
+                elif "Coaches" in poll_name:
+                    teams_dict[tid].kenpom_ranking = min(teams_dict[tid].kenpom_ranking, int(rank_val))
 
-    # 3. Overlay BPI data
-    logger.info("Fetching BPI rankings...")
-    bpi = fetch_bpi_rankings()
-    for entry in bpi:
-        tid = entry["team_id"]
-        if tid in teams_dict:
-            # Use BPI ranking as another signal
-            teams_dict[tid].sos_ranking = entry["ranking"]
+    logger.info(f"Applied rankings to {ranked_count} teams")
 
-    # 4. Persist to DB
-    save_teams_to_db(list(teams_dict.values()))
+    # 3. Persist to DB
+    team_list = list(teams_dict.values())
+    save_teams_to_db(team_list)
 
-    return list(teams_dict.values())
+    return team_list
 
 
 def save_teams_to_db(teams: list[Team]):
