@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bracketology - NCAA Tournament Projection</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Bracketology</h1>
+        <p class="subtitle">NCAA Tournament Bracket Projection</p>
+        <div class="header-actions">
+            <span id="last-updated"></span>
+            <button id="btn-update" onclick="triggerUpdate()">Update Now</button>
+        </div>
+    </header>
+
+    <nav class="tabs">
+        <button class="tab active" data-tab="bracket">Bracket</button>
+        <button class="tab" data-tab="seeds">Seed List</button>
+        <button class="tab" data-tab="bubble">Bubble Watch</button>
+        <button class="tab" data-tab="p5status">P5 Status</button>
+        <button class="tab" data-tab="history">History</button>
+    </nav>
+
+    <main>
+        <!-- Bracket View -->
+        <section id="tab-bracket" class="tab-content active">
+            <div class="bracket-container">
+                <div class="region" id="region-South">
+                    <h2>South Region</h2>
+                    <div class="region-matchups"></div>
+                </div>
+                <div class="region" id="region-East">
+                    <h2>East Region</h2>
+                    <div class="region-matchups"></div>
+                </div>
+                <div class="region" id="region-West">
+                    <h2>West Region</h2>
+                    <div class="region-matchups"></div>
+                </div>
+                <div class="region" id="region-Midwest">
+                    <h2>Midwest Region</h2>
+                    <div class="region-matchups"></div>
+                </div>
+            </div>
+
+            <div class="first-four-section">
+                <h2>First Four (Dayton)</h2>
+                <div id="first-four-games"></div>
+            </div>
+        </section>
+
+        <!-- Seed List View -->
+        <section id="tab-seeds" class="tab-content">
+            <h2>Complete Seed List (1-68)</h2>
+            <div id="seed-list"></div>
+        </section>
+
+        <!-- Bubble Watch -->
+        <section id="tab-bubble" class="tab-content">
+            <div class="bubble-section">
+                <h2>Last Four In</h2>
+                <div id="last-four-in" class="team-list"></div>
+            </div>
+            <div class="bubble-section">
+                <h2>First Four Out</h2>
+                <div id="first-four-out" class="team-list"></div>
+            </div>
+            <div class="bubble-section">
+                <h2>Next Four Out</h2>
+                <div id="next-four-out" class="team-list"></div>
+            </div>
+        </section>
+
+        <!-- P5 Status -->
+        <section id="tab-p5status" class="tab-content">
+            <h2>Power Conference At-Large Status</h2>
+            <p class="info-text">Tracks which P5/P6 teams are locked into an at-large bid and which are eliminated.</p>
+            <div class="status-legend">
+                <span class="legend-item"><span class="dot lock"></span> Lock</span>
+                <span class="legend-item"><span class="dot safe"></span> Safe</span>
+                <span class="legend-item"><span class="dot bubble_in"></span> Bubble (In)</span>
+                <span class="legend-item"><span class="dot bubble_out"></span> Bubble (Out)</span>
+                <span class="legend-item"><span class="dot eliminated"></span> Eliminated</span>
+                <span class="legend-item"><span class="dot auto_bid"></span> Auto-Bid</span>
+            </div>
+            <div id="p5-status-list"></div>
+        </section>
+
+        <!-- History -->
+        <section id="tab-history" class="tab-content">
+            <h2>Projection History</h2>
+            <p class="info-text">See what changed between updates. Select a snapshot to view.</p>
+            <div id="history-list"></div>
+            <div id="history-detail" class="hidden"></div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Data sourced from ESPN. Updated automatically. Projections are estimates and not official NCAA selections.</p>
+    </footer>
+
+    <div id="loading-overlay" class="hidden">
+        <div class="spinner"></div>
+        <p>Updating bracket...</p>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
