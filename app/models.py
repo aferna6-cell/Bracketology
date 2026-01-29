@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -26,10 +26,20 @@ class Team:
     quad2_losses: int = 0
     quad3_losses: int = 0
     quad4_losses: int = 0
-    sos_ranking: int = 999  # strength of schedule
-    conference_standing: int = 99  # position in conference
+    sos_ranking: int = 999
+    conference_standing: int = 99
     is_conference_champ: bool = False
-    rating: float = 0.0  # composite rating used for seeding
+    rating: float = 0.0
+    # Enhanced fields
+    road_wins: int = 0
+    road_losses: int = 0
+    neutral_wins: int = 0
+    neutral_losses: int = 0
+    vs_ranked_record: str = ""
+    streak: str = ""
+    avg_points_for: float = 0.0
+    avg_points_against: float = 0.0
+    remaining_sos: float = 0.0  # future schedule difficulty
 
     @property
     def record(self) -> str:
@@ -49,6 +59,38 @@ class Team:
         from app.config import POWER_CONFERENCES
         return self.conference in POWER_CONFERENCES
 
+    @property
+    def point_diff(self) -> float:
+        return self.avg_points_for - self.avg_points_against
+
+    def to_detail_dict(self) -> dict:
+        """Full team detail for the team modal."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "conference": self.conference,
+            "record": self.record,
+            "conf_record": self.conf_record,
+            "win_pct": round(self.win_pct, 3),
+            "net_ranking": self.net_ranking if self.net_ranking < 999 else None,
+            "kenpom_ranking": self.kenpom_ranking if self.kenpom_ranking < 999 else None,
+            "sos_ranking": self.sos_ranking if self.sos_ranking < 999 else None,
+            "conference_standing": self.conference_standing,
+            "is_conference_champ": self.is_conference_champ,
+            "rating": round(self.rating, 2),
+            "quad1": f"{self.quad1_wins}-{self.quad1_losses}",
+            "quad2": f"{self.quad2_wins}-{self.quad2_losses}",
+            "quad3": f"W-{self.quad3_losses}L",
+            "quad4": f"W-{self.quad4_losses}L",
+            "road_record": f"{self.road_wins}-{self.road_losses}",
+            "vs_ranked": self.vs_ranked_record or "N/A",
+            "streak": self.streak or "N/A",
+            "ppg": round(self.avg_points_for, 1) if self.avg_points_for else None,
+            "opp_ppg": round(self.avg_points_against, 1) if self.avg_points_against else None,
+            "point_diff": round(self.point_diff, 1) if self.avg_points_for else None,
+            "is_power_conference": self.is_power_conference,
+        }
+
 
 @dataclass
 class BracketEntry:
@@ -59,7 +101,8 @@ class BracketEntry:
     is_auto_bid: bool
     is_first_four: bool = False
     first_four_opponent: Optional['BracketEntry'] = None
-    bid_status: str = ""  # "lock", "safe", "bubble_in", "bubble_out", "eliminated"
+    bid_status: str = ""
+    bubble_score: float = 0.0  # 0-100 for bubble meter
 
 
 @dataclass
@@ -77,14 +120,16 @@ class GameResult:
 class Bracket:
     """Full 68-team bracket projection."""
     timestamp: str
-    regions: dict = field(default_factory=dict)  # region -> list of BracketEntry
-    first_four: list = field(default_factory=list)  # list of (BracketEntry, BracketEntry) tuples
+    regions: dict = field(default_factory=dict)
+    first_four: list = field(default_factory=list)
     auto_bids: list = field(default_factory=list)
     at_large: list = field(default_factory=list)
     last_four_in: list = field(default_factory=list)
     first_four_out: list = field(default_factory=list)
     next_four_out: list = field(default_factory=list)
-    p5_status: dict = field(default_factory=dict)  # team_name -> status string
+    p5_status: dict = field(default_factory=dict)
+    conference_breakdown: dict = field(default_factory=dict)
+    all_teams: list = field(default_factory=list)  # all rated teams for what-if
 
     def to_dict(self) -> dict:
         def entry_to_dict(e, include_opponent=True):
@@ -100,8 +145,13 @@ class Bracket:
                 "is_first_four": e.is_first_four,
                 "bid_status": e.bid_status,
                 "record": e.team.record,
+                "conf_record": e.team.conf_record,
                 "net_ranking": e.team.net_ranking,
                 "rating": round(e.team.rating, 2),
+                "bubble_score": round(e.bubble_score, 1),
+                "wins": e.team.wins,
+                "losses": e.team.losses,
+                "streak": e.team.streak,
             }
             if include_opponent and e.first_four_opponent:
                 d["first_four_opponent"] = entry_to_dict(e.first_four_opponent, include_opponent=False)
@@ -129,6 +179,7 @@ class Bracket:
             "first_four_out": [entry_to_dict(e) for e in self.first_four_out],
             "next_four_out": [entry_to_dict(e) for e in self.next_four_out],
             "p5_status": self.p5_status,
+            "conference_breakdown": self.conference_breakdown,
         }
 
 
@@ -186,6 +237,12 @@ def init_db():
     """)
 
     c.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist (
+            team_id INTEGER PRIMARY KEY
+        )
+    """)
+
+    c.execute("""
         CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp
         ON snapshots(timestamp)
     """)
@@ -195,7 +252,6 @@ def init_db():
 
 
 def save_snapshot(bracket: Bracket, changes: list = None):
-    """Save a bracket snapshot to the database."""
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
     c.execute(
@@ -207,7 +263,6 @@ def save_snapshot(bracket: Bracket, changes: list = None):
 
 
 def get_latest_snapshot() -> Optional[dict]:
-    """Get the most recent bracket snapshot."""
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
     c.execute("SELECT bracket_json, changes_json FROM snapshots ORDER BY timestamp DESC LIMIT 1")
@@ -219,7 +274,6 @@ def get_latest_snapshot() -> Optional[dict]:
 
 
 def get_snapshot_history(limit: int = 30) -> list:
-    """Get recent snapshot summaries."""
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
     c.execute(
@@ -235,7 +289,6 @@ def get_snapshot_history(limit: int = 30) -> list:
 
 
 def get_snapshot_by_id(snapshot_id: int) -> Optional[dict]:
-    """Get a specific snapshot by ID."""
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
     c.execute("SELECT bracket_json, changes_json FROM snapshots WHERE id = ?", (snapshot_id,))
@@ -244,3 +297,29 @@ def get_snapshot_by_id(snapshot_id: int) -> Optional[dict]:
     if row:
         return {"bracket": json.loads(row[0]), "changes": json.loads(row[1])}
     return None
+
+
+# Watchlist helpers
+def get_watchlist() -> set:
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("SELECT team_id FROM watchlist")
+    ids = {r[0] for r in c.fetchall()}
+    conn.close()
+    return ids
+
+
+def add_to_watchlist(team_id: int):
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO watchlist (team_id) VALUES (?)", (team_id,))
+    conn.commit()
+    conn.close()
+
+
+def remove_from_watchlist(team_id: int):
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM watchlist WHERE team_id = ?", (team_id,))
+    conn.commit()
+    conn.close()

@@ -5,22 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bracketology - NCAA Tournament Projection</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="alternate" type="application/rss+xml" title="Bracketology RSS" href="/api/feed.rss">
 </head>
 <body>
     <header>
-        <h1>Bracketology</h1>
-        <p class="subtitle">NCAA Tournament Bracket Projection</p>
+        <div class="header-left">
+            <h1>Bracketology</h1>
+            <p class="subtitle">NCAA Tournament Bracket Projection</p>
+        </div>
         <div class="header-actions">
             <span id="last-updated"></span>
             <button id="btn-update" onclick="triggerUpdate()">Update Now</button>
+            <button class="btn-secondary" onclick="window.print()">Print</button>
         </div>
     </header>
+
+    <!-- Recent changes banner -->
+    <div id="changes-banner" class="changes-banner hidden"></div>
 
     <nav class="tabs">
         <button class="tab active" data-tab="bracket">Bracket</button>
         <button class="tab" data-tab="seeds">Seed List</button>
         <button class="tab" data-tab="bubble">Bubble Watch</button>
         <button class="tab" data-tab="p5status">P5 Status</button>
+        <button class="tab" data-tab="conferences">Conferences</button>
+        <button class="tab" data-tab="whatif">What-If</button>
         <button class="tab" data-tab="history">History</button>
     </nav>
 
@@ -28,31 +37,18 @@
         <!-- Bracket View -->
         <section id="tab-bracket" class="tab-content active">
             <div class="bracket-container">
-                <div class="region" id="region-South">
-                    <h2>South Region</h2>
-                    <div class="region-matchups"></div>
-                </div>
-                <div class="region" id="region-East">
-                    <h2>East Region</h2>
-                    <div class="region-matchups"></div>
-                </div>
-                <div class="region" id="region-West">
-                    <h2>West Region</h2>
-                    <div class="region-matchups"></div>
-                </div>
-                <div class="region" id="region-Midwest">
-                    <h2>Midwest Region</h2>
-                    <div class="region-matchups"></div>
-                </div>
+                <div class="region" id="region-South"><h2>South Region</h2><div class="region-matchups"></div></div>
+                <div class="region" id="region-East"><h2>East Region</h2><div class="region-matchups"></div></div>
+                <div class="region" id="region-West"><h2>West Region</h2><div class="region-matchups"></div></div>
+                <div class="region" id="region-Midwest"><h2>Midwest Region</h2><div class="region-matchups"></div></div>
             </div>
-
             <div class="first-four-section">
                 <h2>First Four (Dayton)</h2>
                 <div id="first-four-games"></div>
             </div>
         </section>
 
-        <!-- Seed List View -->
+        <!-- Seed List -->
         <section id="tab-seeds" class="tab-content">
             <h2>Complete Seed List (1-68)</h2>
             <div id="seed-list"></div>
@@ -60,52 +56,85 @@
 
         <!-- Bubble Watch -->
         <section id="tab-bubble" class="tab-content">
-            <div class="bubble-section">
-                <h2>Last Four In</h2>
-                <div id="last-four-in" class="team-list"></div>
-            </div>
-            <div class="bubble-section">
-                <h2>First Four Out</h2>
-                <div id="first-four-out" class="team-list"></div>
-            </div>
-            <div class="bubble-section">
-                <h2>Next Four Out</h2>
-                <div id="next-four-out" class="team-list"></div>
-            </div>
+            <div class="bubble-section"><h2>Last Four In</h2><div id="last-four-in" class="team-list"></div></div>
+            <div class="bubble-section"><h2>First Four Out</h2><div id="first-four-out" class="team-list"></div></div>
+            <div class="bubble-section"><h2>Next Four Out</h2><div id="next-four-out" class="team-list"></div></div>
         </section>
 
         <!-- P5 Status -->
         <section id="tab-p5status" class="tab-content">
             <h2>Power Conference At-Large Status</h2>
-            <p class="info-text">Tracks which P5/P6 teams are locked into an at-large bid and which are eliminated.</p>
             <div class="status-legend">
                 <span class="legend-item"><span class="dot lock"></span> Lock</span>
                 <span class="legend-item"><span class="dot safe"></span> Safe</span>
-                <span class="legend-item"><span class="dot bubble_in"></span> Bubble (In)</span>
-                <span class="legend-item"><span class="dot bubble_out"></span> Bubble (Out)</span>
+                <span class="legend-item"><span class="dot bubble_in"></span> Bubble In</span>
+                <span class="legend-item"><span class="dot bubble_out"></span> Bubble Out</span>
                 <span class="legend-item"><span class="dot eliminated"></span> Eliminated</span>
                 <span class="legend-item"><span class="dot auto_bid"></span> Auto-Bid</span>
             </div>
             <div id="p5-status-list"></div>
         </section>
 
+        <!-- Conference Breakdown -->
+        <section id="tab-conferences" class="tab-content">
+            <h2>Conference Breakdown</h2>
+            <p class="info-text">Each conference's auto-bid, at-large bids, and bubble teams.</p>
+            <div id="conference-list"></div>
+        </section>
+
+        <!-- What-If Simulator -->
+        <section id="tab-whatif" class="tab-content">
+            <h2>What-If Simulator</h2>
+            <p class="info-text">Simulate how wins or losses change the bracket.</p>
+            <div class="whatif-controls">
+                <select id="whatif-team"></select>
+                <div class="whatif-btns">
+                    <button onclick="runWhatIf(1, 0)">+ Win</button>
+                    <button onclick="runWhatIf(0, 1)">+ Loss</button>
+                    <button onclick="runWhatIf(3, 0)">+3 Wins</button>
+                    <button onclick="runWhatIf(0, 3)">+3 Losses</button>
+                    <button class="btn-secondary" onclick="resetWhatIf()">Reset</button>
+                </div>
+            </div>
+            <div id="whatif-result"></div>
+        </section>
+
         <!-- History -->
         <section id="tab-history" class="tab-content">
             <h2>Projection History</h2>
-            <p class="info-text">See what changed between updates. Select a snapshot to view.</p>
+            <p class="info-text">Select two snapshots to compare side-by-side.</p>
+            <div class="compare-controls">
+                <select id="compare-old"><option value="">-- Old snapshot --</option></select>
+                <select id="compare-new"><option value="">-- New snapshot --</option></select>
+                <button onclick="compareSideBySide()">Compare</button>
+            </div>
+            <div id="compare-result" class="hidden"></div>
             <div id="history-list"></div>
             <div id="history-detail" class="hidden"></div>
         </section>
     </main>
 
-    <footer>
-        <p>Data sourced from ESPN. Updated automatically. Projections are estimates and not official NCAA selections.</p>
-    </footer>
+    <!-- Team Detail Modal -->
+    <div id="team-modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <div id="modal-body"></div>
+        </div>
+    </div>
 
+    <!-- Loading -->
     <div id="loading-overlay" class="hidden">
         <div class="spinner"></div>
-        <p>Updating bracket...</p>
+        <p id="loading-text">Updating bracket...</p>
     </div>
+
+    <!-- Error toast -->
+    <div id="error-toast" class="toast hidden"></div>
+
+    <footer>
+        <p>Data from ESPN. Updates daily at 8am (hourly in March). Not official NCAA selections.</p>
+        <p class="feed-links">Feeds: <a href="/api/feed.json">JSON</a> | <a href="/api/feed.rss">RSS</a></p>
+    </footer>
 
     <script src="/static/js/app.js"></script>
 </body>
