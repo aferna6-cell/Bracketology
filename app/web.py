@@ -3,12 +3,16 @@
 import json
 import logging
 import threading
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from flask import Flask, render_template, jsonify, request, Response
 
 from app.models import (
     init_db, get_latest_snapshot, get_snapshot_history, get_snapshot_by_id,
     get_watchlist, add_to_watchlist, remove_from_watchlist,
 )
+from app.data_ingestion import fetch_scoreboard
 from app.update import run_update, get_current_bracket, get_all_teams
 from app.scheduler import start_scheduler
 
@@ -59,6 +63,27 @@ def create_app() -> Flask:
         if not old_snap or not new_snap:
             return jsonify({"error": "Snapshot not found"}), 404
         return jsonify({"old": old_snap, "new": new_snap})
+
+    @app.route("/api/scoreboard")
+    def api_scoreboard():
+        date_param = request.args.get("date")
+        date_key = date_param or _yesterday_key()
+        if date_param and not _valid_scoreboard_date(date_param):
+            return jsonify({
+                "date": date_key,
+                "games": [],
+                "error": "Invalid date format. Use YYYYMMDD.",
+            })
+        try:
+            games = fetch_scoreboard(date_key)
+            return jsonify({"date": date_key, "games": games})
+        except Exception as exc:
+            logger.error(f"Scoreboard fetch failed: {exc}")
+            return jsonify({
+                "date": date_key,
+                "games": [],
+                "error": "Scoreboard unavailable.",
+            }), 200
 
     # Team detail modal
     @app.route("/api/team/<int:team_id>")
@@ -168,3 +193,18 @@ def create_app() -> Flask:
                 threading.Thread(target=run_update, daemon=True).start()
 
     return app
+
+
+def _yesterday_key() -> str:
+    now = datetime.now(ZoneInfo("America/New_York"))
+    return (now - timedelta(days=1)).strftime("%Y%m%d")
+
+
+def _valid_scoreboard_date(value: str) -> bool:
+    if len(value) != 8 or not value.isdigit():
+        return False
+    try:
+        datetime.strptime(value, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
