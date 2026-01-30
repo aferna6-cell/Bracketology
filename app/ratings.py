@@ -5,6 +5,8 @@ import logging
 from app.models import Team
 from app.rating_config import (
     RATING_WEIGHTS,
+    MID_MAJOR_RATING_PENALTY,
+    P5_RATING_BONUS,
     bad_losses_score,
     conf_standing_score,
     conf_strength_score,
@@ -70,6 +72,11 @@ def compute_ratings(teams: list[Team]) -> list[Team]:
 
         for key, weight in RATING_WEIGHTS.items():
             score += component_scores.get(key, 0.0) * weight
+
+        if team.is_power_conference:
+            score += P5_RATING_BONUS
+        else:
+            score -= MID_MAJOR_RATING_PENALTY
 
         team.rating = round(score, 3)
 

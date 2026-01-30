@@ -39,6 +39,10 @@ CONF_TIER_SCORES = {
     "default": 25,
 }
 
+# Bracket trend adjustments
+P5_RATING_BONUS = 3.0
+MID_MAJOR_RATING_PENALTY = 1.5
+
 
 def clamp(value: float, min_value: float = 0.0, max_value: float = 100.0) -> float:
     return max(min_value, min(max_value, value))
