@@ -212,6 +212,8 @@ def init_db():
         )
     """)
 
+    _ensure_team_columns(c)
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS game_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,6 +251,22 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def _ensure_team_columns(cursor: sqlite3.Cursor):
+    columns = [
+        "road_wins INTEGER DEFAULT 0",
+        "road_losses INTEGER DEFAULT 0",
+        "vs_ranked_record TEXT DEFAULT ''",
+        "streak TEXT DEFAULT ''",
+        "avg_points_for REAL DEFAULT 0.0",
+        "avg_points_against REAL DEFAULT 0.0",
+    ]
+    for column in columns:
+        try:
+            cursor.execute(f"ALTER TABLE teams ADD COLUMN {column}")
+        except sqlite3.OperationalError:
+            continue
 
 
 def save_snapshot(bracket: Bracket, changes: list = None):

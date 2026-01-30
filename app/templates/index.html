@@ -25,6 +25,7 @@
 
     <nav class="tabs">
         <button class="tab active" data-tab="bracket">Bracket</button>
+        <button class="tab" data-tab="scoreboard">Scoreboard</button>
         <button class="tab" data-tab="seeds">Seed List</button>
         <button class="tab" data-tab="bubble">Bubble Watch</button>
         <button class="tab" data-tab="p5status">P5 Status</button>
@@ -46,6 +47,17 @@
                 <h2>First Four (Dayton)</h2>
                 <div id="first-four-games"></div>
             </div>
+        </section>
+
+        <!-- Scoreboard -->
+        <section id="tab-scoreboard" class="tab-content">
+            <h2>Last Night's Games</h2>
+            <div class="scoreboard-controls">
+                <button id="scoreboard-prev" class="btn-secondary">&larr; Prev</button>
+                <input type="date" id="scoreboard-date">
+                <button id="scoreboard-next" class="btn-secondary">Next &rarr;</button>
+            </div>
+            <div id="scoreboard-list"></div>
         </section>
 
         <!-- Seed List -->
