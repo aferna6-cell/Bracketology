@@ -21,6 +21,7 @@ from app.config import (
     REGIONS, POWER_CONFERENCES, TOURNAMENT_FIELD_SIZE,
     FIRST_FOUR_AT_LARGE, FIRST_FOUR_AUTO_BID,
     MAX_NON_P5_AT_LARGE,
+    AUTO_BID_NON_P5_SEED_PENALTY,
 )
 from app.ratings import compute_ratings, assign_seed_line, classify_p5_team
 
@@ -30,21 +31,23 @@ logger = logging.getLogger(__name__)
 def select_auto_bids(teams: list) -> list:
     """Select one auto-bid per conference (#1 in standings = projected champ)."""
     auto_bids = {}
+    conf_groups: dict[str, list[Team]] = {}
     for team in teams:
         conf = team.conference
         if conf == "Unknown":
             continue
-        if team.is_conference_champ:
-            auto_bids[conf] = team
-        elif conf not in auto_bids and team.conference_standing == 1:
-            auto_bids[conf] = team
+        conf_groups.setdefault(conf, []).append(team)
 
-    conferences_seen = set(auto_bids.keys())
-    for team in teams:
-        conf = team.conference
-        if conf not in conferences_seen and conf != "Unknown":
-            auto_bids[conf] = team
-            conferences_seen.add(conf)
+    for conf, conf_teams in conf_groups.items():
+        champ = next((t for t in conf_teams if t.is_conference_champ), None)
+        if champ:
+            auto_bids[conf] = champ
+            continue
+        standing_leader = min(conf_teams, key=lambda t: t.conference_standing)
+        if standing_leader.conference_standing < 99:
+            auto_bids[conf] = standing_leader
+            continue
+        auto_bids[conf] = max(conf_teams, key=lambda t: t.rating)
 
     result = list(auto_bids.values())
     result.sort(key=lambda t: t.rating, reverse=True)
@@ -114,6 +117,7 @@ def build_conference_breakdown(teams: list, auto_bid_ids: set, at_large_ids: set
             "at_large": at_large_teams_list,
             "bubble": bubble_teams,
             "others_count": len(other_teams),
+            "bid_count": (1 if auto_bid_team else 0) + len(at_large_teams_list),
             "total": len(conf_teams),
             "is_power": conf in POWER_CONFERENCES,
         }
@@ -145,7 +149,13 @@ def build_bracket(teams: list) -> Bracket:
         all_tournament.append((t, True))
     for t in at_large_teams:
         all_tournament.append((t, False))
-    all_tournament.sort(key=lambda x: x[0].rating, reverse=True)
+    def seed_score(team: Team, is_auto: bool) -> float:
+        score = team.rating
+        if is_auto and not team.is_power_conference:
+            score -= AUTO_BID_NON_P5_SEED_PENALTY
+        return score
+
+    all_tournament.sort(key=lambda x: seed_score(x[0], x[1]), reverse=True)
 
     # First Four
     auto_bid_sorted = sorted(auto_bid_teams, key=lambda t: t.rating)
@@ -301,10 +311,12 @@ def build_bracket(teams: list) -> Bracket:
             # Bubble score: 0 = out, 50 = cut line, 100 = lock
             margin = entry.team.rating - at_large_cutoff
             entry.bubble_score = max(0, min(100, 50 + margin * 4))
+            entry.bubble_pct = round(entry.bubble_score, 1)
 
     for entry in bracket.first_four_out + bracket.next_four_out:
         margin = entry.team.rating - at_large_cutoff
         entry.bubble_score = max(0, min(100, 50 + margin * 4))
+        entry.bubble_pct = round(entry.bubble_score, 1)
 
     # Conference breakdown
     bracket.conference_breakdown = build_conference_breakdown(

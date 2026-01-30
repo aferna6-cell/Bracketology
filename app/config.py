@@ -57,6 +57,7 @@ REQUEST_RATE_LIMITS = {
 
 # Selection tuning
 MAX_NON_P5_AT_LARGE = 6
+AUTO_BID_NON_P5_SEED_PENALTY = 4.0
 
 # Update schedule
 # Normal: daily at 8am (handled by CronTrigger in scheduler.py)

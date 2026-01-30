@@ -139,6 +139,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
 .scoreboard-badge.in { background: rgba(74,144,217,.2); color: var(--accent); }
 .scoreboard-badge.upset { background: rgba(231,76,60,.2); color: var(--eliminated); }
 .team-score { font-variant-numeric: tabular-nums; }
+.scoreboard-proj { font-size: 0.72rem; color: var(--muted); }
 
 /* What-If */
 .whatif-controls { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; padding: 1rem; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border); }
@@ -148,6 +149,14 @@ main { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
 .whatif-summary h3 { margin-bottom: 0.3rem; }
 .whatif-seeds { background: var(--bg-card); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
 .whatif-seeds h4 { margin-bottom: 0.3rem; color: var(--muted); }
+.whatif-matchup { margin-top: 1rem; background: var(--bg-card); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
+.matchup-controls { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.matchup-controls select { min-width: 180px; padding: 0.4rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }
+.whatif-schedule { margin-top: 1rem; background: var(--bg-card); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
+.schedule-controls { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.8rem; }
+.schedule-controls input[type="date"] { padding: 0.4rem 0.6rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+.schedule-game { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; gap: 0.6rem; }
+.schedule-actions { display: flex; gap: 0.4rem; }
 
 /* History + Compare */
 #history-list { display: grid; gap: 3px; margin-bottom: 1rem; }

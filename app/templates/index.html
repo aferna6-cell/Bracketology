@@ -109,6 +109,31 @@
                 </div>
             </div>
             <div id="whatif-result"></div>
+            <div class="whatif-schedule">
+                <h3>Schedule What-If</h3>
+                <p class="info-text">Pick a date and assign outcomes for upcoming games.</p>
+                <div class="schedule-controls">
+                    <input type="date" id="schedule-date">
+                    <button class="btn-secondary" onclick="loadScheduleGames()">Load Games</button>
+                    <button onclick="applyScheduleAdjustments()">Apply Adjustments</button>
+                    <span id="schedule-summary" class="info-text"></span>
+                </div>
+                <div id="schedule-games"></div>
+            </div>
+            <div class="whatif-matchup">
+                <h3>Matchup Simulator</h3>
+                <div class="matchup-controls">
+                    <select id="matchup-home"></select>
+                    <select id="matchup-away"></select>
+                    <select id="matchup-venue">
+                        <option value="home">Home</option>
+                        <option value="away">Away</option>
+                        <option value="neutral">Neutral</option>
+                    </select>
+                    <button onclick="simulateMatchup()">Simulate</button>
+                </div>
+                <p id="matchup-result" class="info-text"></p>
+            </div>
         </section>
 
         <!-- History -->

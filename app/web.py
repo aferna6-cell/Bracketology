@@ -106,6 +106,21 @@ def create_app() -> Flask:
                 return jsonify(t.to_detail_dict())
         return jsonify({"error": "Team not found"}), 404
 
+    @app.route("/api/teams")
+    def api_teams():
+        teams = get_all_teams()
+        return jsonify([
+            {
+                "id": t.id,
+                "name": t.name,
+                "conference": t.conference,
+                "rating": round(t.rating, 2),
+                "record": t.record,
+                "is_power_conference": t.is_power_conference,
+            }
+            for t in teams
+        ])
+
     # Watchlist
     @app.route("/api/watchlist")
     def api_watchlist():

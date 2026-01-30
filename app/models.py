@@ -107,6 +107,7 @@ class BracketEntry:
     first_four_opponent: Optional['BracketEntry'] = None
     bid_status: str = ""
     bubble_score: float = 0.0  # 0-100 for bubble meter
+    bubble_pct: float = 0.0
 
 
 @dataclass
@@ -153,6 +154,7 @@ class Bracket:
                 "net_ranking": e.team.net_ranking,
                 "rating": round(e.team.rating, 2),
                 "bubble_score": round(e.bubble_score, 1),
+                "bubble_pct": round(e.bubble_pct, 1),
                 "wins": e.team.wins,
                 "losses": e.team.losses,
                 "streak": e.team.streak,
@@ -184,6 +186,17 @@ class Bracket:
             "next_four_out": [entry_to_dict(e) for e in self.next_four_out],
             "p5_status": self.p5_status,
             "conference_breakdown": self.conference_breakdown,
+            "all_teams": [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "conference": t.conference,
+                    "rating": round(t.rating, 2),
+                    "record": t.record,
+                    "is_power_conference": t.is_power_conference,
+                }
+                for t in self.all_teams
+            ],
         }
 
 
