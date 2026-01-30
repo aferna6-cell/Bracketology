@@ -20,6 +20,8 @@ class Team:
     conf_losses: int = 0
     net_ranking: int = 999
     kenpom_ranking: int = 999
+    torvik_ranking: int = 999
+    sagarin_ranking: int = 999
     quad1_wins: int = 0
     quad1_losses: int = 0
     quad2_wins: int = 0
@@ -74,6 +76,8 @@ class Team:
             "win_pct": round(self.win_pct, 3),
             "net_ranking": self.net_ranking if self.net_ranking < 999 else None,
             "kenpom_ranking": self.kenpom_ranking if self.kenpom_ranking < 999 else None,
+            "torvik_ranking": self.torvik_ranking if self.torvik_ranking < 999 else None,
+            "sagarin_ranking": self.sagarin_ranking if self.sagarin_ranking < 999 else None,
             "sos_ranking": self.sos_ranking if self.sos_ranking < 999 else None,
             "conference_standing": self.conference_standing,
             "is_conference_champ": self.is_conference_champ,
@@ -103,6 +107,7 @@ class BracketEntry:
     first_four_opponent: Optional['BracketEntry'] = None
     bid_status: str = ""
     bubble_score: float = 0.0  # 0-100 for bubble meter
+    bubble_pct: float = 0.0
 
 
 @dataclass
@@ -149,6 +154,7 @@ class Bracket:
                 "net_ranking": e.team.net_ranking,
                 "rating": round(e.team.rating, 2),
                 "bubble_score": round(e.bubble_score, 1),
+                "bubble_pct": round(e.bubble_pct, 1),
                 "wins": e.team.wins,
                 "losses": e.team.losses,
                 "streak": e.team.streak,
@@ -180,6 +186,17 @@ class Bracket:
             "next_four_out": [entry_to_dict(e) for e in self.next_four_out],
             "p5_status": self.p5_status,
             "conference_breakdown": self.conference_breakdown,
+            "all_teams": [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "conference": t.conference,
+                    "rating": round(t.rating, 2),
+                    "record": t.record,
+                    "is_power_conference": t.is_power_conference,
+                }
+                for t in self.all_teams
+            ],
         }
 
 
@@ -211,6 +228,8 @@ def init_db():
             rating REAL DEFAULT 0.0
         )
     """)
+
+    _ensure_team_columns(c)
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS game_results (
@@ -249,6 +268,24 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def _ensure_team_columns(cursor: sqlite3.Cursor):
+    columns = [
+        "road_wins INTEGER DEFAULT 0",
+        "road_losses INTEGER DEFAULT 0",
+        "vs_ranked_record TEXT DEFAULT ''",
+        "streak TEXT DEFAULT ''",
+        "avg_points_for REAL DEFAULT 0.0",
+        "avg_points_against REAL DEFAULT 0.0",
+        "torvik_ranking INTEGER DEFAULT 999",
+        "sagarin_ranking INTEGER DEFAULT 999",
+    ]
+    for column in columns:
+        try:
+            cursor.execute(f"ALTER TABLE teams ADD COLUMN {column}")
+        except sqlite3.OperationalError:
+            continue
 
 
 def save_snapshot(bracket: Bracket, changes: list = None):

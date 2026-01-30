@@ -1,11 +1,18 @@
 // Bracketology - NCAA Tournament Projection App
 let _bracketData = null;
 let _watchlist = new Set();
+let _scoreboardData = [];
+let _scoreboardDateKey = null;
+let _allTeams = [];
+let _scheduleAdjustments = { wins: 0, losses: 0 };
 
 document.addEventListener("DOMContentLoaded", () => {
     setupTabs();
     loadWatchlist();
     loadBracket();
+    initScoreboard();
+    loadAllTeams();
+    setupWhatIf();
 });
 
 // ─── Tabs ────────────────────────────────────────────────────
@@ -71,6 +78,9 @@ function renderAll(data) {
     renderP5Status(data.p5_status || {});
     renderConferences(data.conference_breakdown || {});
     populateWhatIfTeams(data);
+    if (_scoreboardData.length) {
+        renderScoreboard(_scoreboardData, _scoreboardDateKey);
+    }
 }
 
 // ─── Changes Banner ──────────────────────────────────────────
@@ -200,12 +210,13 @@ function renderBubbleList(id, teams, side) {
     let html = "";
     for (const t of teams) {
         const score = t.bubble_score || 50;
+        const pct = t.bubble_pct !== undefined ? t.bubble_pct : score;
         const color = score >= 60 ? "#2ecc71" : score >= 40 ? "#f39c12" : "#e74c3c";
         html += `<div class="bubble-team">
             <span class="team-name">${teamLink(t)}</span>
             <span>${t.conference}</span>
             <span>${t.record}</span>
-            <div class="bubble-meter"><div class="bubble-fill" style="width:${score}%;background:${color}"></div><span class="bubble-label">${Math.round(score)}</span></div>
+            <div class="bubble-meter"><div class="bubble-fill" style="width:${score}%;background:${color}"></div><span class="bubble-label">${Math.round(pct)}%</span></div>
         </div>`;
     }
     container.innerHTML = html;
@@ -254,13 +265,208 @@ function renderConferences(breakdown) {
         ).join("");
 
         html += `<div class="conf-card${power}">
-            <div class="conf-header"><h3>${conf}</h3><span class="conf-count">${data.total} teams</span></div>
+            <div class="conf-header"><h3>${conf}</h3><span class="conf-count">${data.total} teams | ${data.bid_count} bids</span></div>
             ${autobid}
             ${atLarge ? `<div class="conf-section"><span class="conf-label">At-Large:</span>${atLarge}</div>` : ""}
             ${bubble ? `<div class="conf-section"><span class="conf-label">Bubble:</span>${bubble}</div>` : ""}
         </div>`;
     }
     container.innerHTML = html;
+}
+
+// ─── Scoreboard ──────────────────────────────────────────────
+function initScoreboard() {
+    const dateInput = document.getElementById("scoreboard-date");
+    const prevBtn = document.getElementById("scoreboard-prev");
+    const nextBtn = document.getElementById("scoreboard-next");
+    if (!dateInput || !prevBtn || !nextBtn) return;
+
+    dateInput.addEventListener("change", () => {
+        const dateKey = (dateInput.value || "").replace(/-/g, "");
+        loadScoreboard(dateKey);
+    });
+    prevBtn.addEventListener("click", () => shiftScoreboardDate(-1));
+    nextBtn.addEventListener("click", () => shiftScoreboardDate(1));
+    loadScoreboard();
+}
+
+function shiftScoreboardDate(delta) {
+    if (!_scoreboardDateKey) return;
+    const date = parseDateKey(_scoreboardDateKey);
+    date.setDate(date.getDate() + delta);
+    loadScoreboard(formatDateKey(date));
+}
+
+async function loadScoreboard(dateKey = null) {
+    const container = document.getElementById("scoreboard-list");
+    if (container) container.innerHTML = "<p class='info-text'>Loading scoreboard...</p>";
+    const url = dateKey ? `/api/scoreboard?date=${dateKey}` : "/api/scoreboard";
+
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        _scoreboardDateKey = data.date || dateKey;
+        _scoreboardData = data.games || [];
+        syncScoreboardDateInput(_scoreboardDateKey);
+        renderScoreboard(_scoreboardData, _scoreboardDateKey, data.error);
+    } catch (err) {
+        if (container) {
+            container.innerHTML = `<p class='info-text'>Scoreboard error: ${err.message}</p>`;
+        }
+    }
+}
+
+async function loadAllTeams() {
+    try {
+        const resp = await fetch("/api/teams");
+        if (!resp.ok) return;
+        _allTeams = await resp.json();
+        populateMatchupTeams();
+        populateWhatIfTeams(_bracketData || {});
+    } catch (err) { /* ignore */ }
+}
+
+function renderScoreboard(games, dateKey, errorMessage = null) {
+    const container = document.getElementById("scoreboard-list");
+    if (!container) return;
+
+    if (errorMessage) {
+        container.innerHTML = `<p class='info-text'>${errorMessage}</p>`;
+        return;
+    }
+
+    if (!games.length) {
+        container.innerHTML = "<p class='info-text'>No games found for this date.</p>";
+        return;
+    }
+
+    const fieldTeams = getFieldTeamIds();
+    const ratingsMap = getRatingsMap();
+
+    const cards = games.map(game => {
+        const status = game.status || "Scheduled";
+        const home = game.home || {};
+        const away = game.away || {};
+        const isFinal = status === "Final";
+        const winner = isFinal ? getWinner(home, away) : null;
+        const upset = isFinal && isUpsetResult(home, away, ratingsMap);
+        const projected = status === "Scheduled" ? getWinProjection(home, away, ratingsMap) : null;
+
+        return `<div class="scoreboard-card">
+            <div class="scoreboard-status">
+                <span class="status-text">${status}</span>
+                ${upset ? `<span class="scoreboard-badge upset">UPSET</span>` : ""}
+            </div>
+            <div class="scoreboard-team ${fieldTeams.has(away.id) ? "in-field" : ""}">
+                ${renderScoreboardTeam(away, winner)}
+                ${fieldTeams.has(away.id) ? `<span class="scoreboard-badge in">IN</span>` : ""}
+            </div>
+            <div class="scoreboard-team ${fieldTeams.has(home.id) ? "in-field" : ""}">
+                ${renderScoreboardTeam(home, winner)}
+                ${fieldTeams.has(home.id) ? `<span class="scoreboard-badge in">IN</span>` : ""}
+            </div>
+            ${projected ? `<div class="scoreboard-proj">${projected}</div>` : ""}
+        </div>`;
+    }).join("");
+
+    container.innerHTML = cards;
+}
+
+function renderScoreboardTeam(team, winner) {
+    const name = team.name || "TBD";
+    const score = team.score !== undefined ? team.score : "-";
+    const winnerClass = winner && winner.id === team.id ? "winner" : "";
+    if (team.id) {
+        return `<button class="scoreboard-team-link ${winnerClass}" onclick="openTeamModal(${team.id})">
+            <span class="team-name">${name}</span>
+            <span class="team-score">${score}</span>
+        </button>`;
+    }
+    return `<div class="scoreboard-team-link ${winnerClass}">
+        <span class="team-name">${name}</span>
+        <span class="team-score">${score}</span>
+    </div>`;
+}
+
+function getWinner(home, away) {
+    if (home.score === undefined || away.score === undefined) return null;
+    if (home.score === away.score) return null;
+    return home.score > away.score ? home : away;
+}
+
+function getWinProjection(home, away, ratingsMap) {
+    if (!ratingsMap.size) return null;
+    const homeRating = ratingsMap.get(home.id);
+    const awayRating = ratingsMap.get(away.id);
+    if (homeRating === undefined || awayRating === undefined) return null;
+    const homeProb = winProb(homeRating, awayRating, 2.5);
+    const awayProb = 1 - homeProb;
+    const spread = Math.round(Math.abs(homeRating - awayRating) * 0.6);
+    const favored = homeProb >= 0.5 ? home.name : away.name;
+    return `${favored} favored by ~${spread} | ${Math.round(homeProb * 100)}%-${Math.round(awayProb * 100)}`;
+}
+
+function winProb(homeRating, awayRating, homeAdvantage = 0) {
+    const diff = (homeRating + homeAdvantage) - awayRating;
+    return 1 / (1 + Math.pow(10, -diff / 8));
+}
+
+function isUpsetResult(home, away, ratingsMap) {
+    if (!ratingsMap.size) return false;
+    const homeRating = ratingsMap.get(home.id);
+    const awayRating = ratingsMap.get(away.id);
+    if (homeRating === undefined || awayRating === undefined) return false;
+    const winner = getWinner(home, away);
+    if (!winner) return false;
+    const loser = winner.id === home.id ? away : home;
+    const winnerRating = ratingsMap.get(winner.id);
+    const loserRating = ratingsMap.get(loser.id);
+    return winnerRating < loserRating;
+}
+
+function getFieldTeamIds() {
+    const ids = new Set();
+    if (!_bracketData) return ids;
+    for (const entries of Object.values(_bracketData.regions || {})) {
+        entries.forEach(e => ids.add(e.team_id));
+    }
+    for (const g of _bracketData.first_four || []) {
+        (g.game || []).forEach(e => { if (e) ids.add(e.team_id); });
+    }
+    return ids;
+}
+
+function getRatingsMap() {
+    const ratings = new Map();
+    if (!_bracketData) return ratings;
+    for (const entries of Object.values(_bracketData.regions || {})) {
+        entries.forEach(e => ratings.set(e.team_id, e.rating));
+    }
+    for (const g of _bracketData.first_four || []) {
+        (g.game || []).forEach(e => { if (e) ratings.set(e.team_id, e.rating); });
+    }
+    return ratings;
+}
+
+function syncScoreboardDateInput(dateKey) {
+    const dateInput = document.getElementById("scoreboard-date");
+    if (!dateInput || !dateKey) return;
+    const date = parseDateKey(dateKey);
+    dateInput.value = date.toISOString().slice(0, 10);
+}
+
+function parseDateKey(dateKey) {
+    const year = parseInt(dateKey.slice(0, 4));
+    const month = parseInt(dateKey.slice(4, 6)) - 1;
+    const day = parseInt(dateKey.slice(6, 8));
+    return new Date(year, month, day);
+}
+
+function formatDateKey(date) {
+    const y = date.getFullYear().toString();
+    const m = (date.getMonth() + 1).toString().padStart(2, "0");
+    const d = date.getDate().toString().padStart(2, "0");
+    return `${y}${m}${d}`;
 }
 
 // ─── What-If Simulator ───────────────────────────────────────
@@ -272,6 +478,9 @@ function populateWhatIfTeams(data) {
     for (const g of data.first_four || []) (g.game || []).forEach(e => { if (e) all.push(e); });
     for (const e of (data.last_four_in || [])) all.push(e);
     for (const e of (data.first_four_out || [])) all.push(e);
+    const p5Teams = _allTeams.filter(t => t.is_power_conference)
+        .map(t => ({ team_id: t.id, team_name: t.name, record: t.record || "" }));
+    all.push(...p5Teams);
     all.sort((a, b) => (a.team_name || "").localeCompare(b.team_name || ""));
 
     const seen = new Set();
@@ -282,6 +491,105 @@ function populateWhatIfTeams(data) {
         html += `<option value="${t.team_id}">${t.team_name} (${t.record})</option>`;
     }
     select.innerHTML = html;
+    updateScheduleSummary();
+}
+
+function setupWhatIf() {
+    const select = document.getElementById("whatif-team");
+    if (!select) return;
+    select.addEventListener("change", () => {
+        _scheduleAdjustments = { wins: 0, losses: 0 };
+        updateScheduleSummary();
+    });
+}
+
+async function loadScheduleGames() {
+    const dateInput = document.getElementById("schedule-date");
+    const teamId = parseInt(document.getElementById("whatif-team").value);
+    const container = document.getElementById("schedule-games");
+    if (!teamId || !dateInput || !container) return;
+    const dateKey = (dateInput.value || "").replace(/-/g, "");
+    if (!dateKey) {
+        container.innerHTML = "<p class='info-text'>Select a date.</p>";
+        return;
+    }
+    container.innerHTML = "<p class='info-text'>Loading games...</p>";
+    try {
+        const resp = await fetch(`/api/scoreboard?date=${dateKey}`);
+        const data = await resp.json();
+        const games = data.games || [];
+        const teamGames = games.filter(g => g.status !== "Final" && (g.home?.id === teamId || g.away?.id === teamId));
+        if (!teamGames.length) {
+            container.innerHTML = "<p class='info-text'>No scheduled games for this team.</p>";
+            return;
+        }
+        const html = teamGames.map(g => {
+            const home = g.home?.name || "Home";
+            const away = g.away?.name || "Away";
+            return `<div class="schedule-game">
+                <span>${away} @ ${home}</span>
+                <div class="schedule-actions">
+                    <button class="btn-secondary" onclick="applyScheduleResult(${teamId}, ${g.home?.id}, ${g.away?.id}, 'win')">Team Win</button>
+                    <button class="btn-secondary" onclick="applyScheduleResult(${teamId}, ${g.home?.id}, ${g.away?.id}, 'loss')">Team Loss</button>
+                </div>
+            </div>`;
+        }).join("");
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<p class='info-text'>Failed to load games: ${err.message}</p>`;
+    }
+}
+
+function applyScheduleResult(teamId, homeId, awayId, result) {
+    if (!teamId || !homeId || !awayId) return;
+    if (result === "win") _scheduleAdjustments.wins += 1;
+    if (result === "loss") _scheduleAdjustments.losses += 1;
+    updateScheduleSummary();
+}
+
+function updateScheduleSummary() {
+    const el = document.getElementById("schedule-summary");
+    if (!el) return;
+    el.textContent = `Adjustments: +${_scheduleAdjustments.wins} wins, +${_scheduleAdjustments.losses} losses`;
+}
+
+function applyScheduleAdjustments() {
+    runWhatIf(_scheduleAdjustments.wins, _scheduleAdjustments.losses);
+    _scheduleAdjustments = { wins: 0, losses: 0 };
+    updateScheduleSummary();
+}
+
+function populateMatchupTeams() {
+    const homeSel = document.getElementById("matchup-home");
+    const awaySel = document.getElementById("matchup-away");
+    if (!homeSel || !awaySel) return;
+    const sorted = [..._allTeams].sort((a, b) => a.name.localeCompare(b.name));
+    const options = sorted.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+    homeSel.innerHTML = options;
+    awaySel.innerHTML = options;
+}
+
+function simulateMatchup() {
+    const homeId = parseInt(document.getElementById("matchup-home").value);
+    const awayId = parseInt(document.getElementById("matchup-away").value);
+    const venue = document.getElementById("matchup-venue").value;
+    const result = document.getElementById("matchup-result");
+    if (!homeId || !awayId || homeId === awayId) {
+        result.textContent = "Select two different teams.";
+        return;
+    }
+    const home = _allTeams.find(t => t.id === homeId);
+    const away = _allTeams.find(t => t.id === awayId);
+    if (!home || !away) {
+        result.textContent = "Teams not available yet.";
+        return;
+    }
+    const homeAdv = venue === "home" ? 2.5 : venue === "away" ? -2.5 : 0;
+    const homeProb = winProb(home.rating || 0, away.rating || 0, homeAdv);
+    const awayProb = 1 - homeProb;
+    const spread = Math.round(Math.abs((home.rating || 0) - (away.rating || 0)) * 0.6);
+    const favored = homeProb >= 0.5 ? home.name : away.name;
+    result.textContent = `${favored} favored by ~${spread}. Win odds: ${home.name} ${Math.round(homeProb * 100)}% / ${away.name} ${Math.round(awayProb * 100)}%`;
 }
 
 async function runWhatIf(addW, addL) {
@@ -315,11 +623,12 @@ async function runWhatIf(addW, addL) {
             }
         }
 
-        let html = `<div class="whatif-summary">`;
-        if (teamEntry) {
-            html += `<h3>${teamEntry.team_name}</h3>
-                <p>Projected: <strong>Seed ${teamEntry.seed}</strong> in ${teamEntry.region} Region</p>
-                <p>Record: ${teamEntry.record} | Rating: ${teamEntry.rating}</p>`;
+    let html = `<div class="whatif-summary">`;
+    if (teamEntry) {
+        html += `<h3>${teamEntry.team_name}</h3>
+            <p>Projected: <strong>Seed ${teamEntry.seed}</strong> in ${teamEntry.region} Region</p>
+            <p>Record: ${teamEntry.record} | Rating: ${teamEntry.rating}</p>
+            <p>At-large odds: ${Math.round(teamEntry.bubble_pct || teamEntry.bubble_score || 50)}%</p>`;
         } else {
             const name = document.getElementById("whatif-team").selectedOptions[0]?.text || "Team";
             html += `<h3>${name}</h3><p>Not projected in the field with this scenario.</p>`;
