@@ -1,8 +1,25 @@
 """Rating engine for computing team composite ratings."""
 
 import logging
+
 from app.models import Team
-from app.config import POWER_CONFERENCES
+from app.rating_config import (
+    RATING_WEIGHTS,
+    MID_MAJOR_RATING_PENALTY,
+    P5_RATING_BONUS,
+    bad_losses_score,
+    conf_standing_score,
+    conf_strength_score,
+    conf_win_pct_score,
+    normalize_rank,
+    point_diff_score,
+    quality_wins_score,
+    road_win_pct_score,
+    sos_score,
+    streak_score,
+    vs_ranked_score,
+    win_pct_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,66 +43,40 @@ def compute_ratings(teams: list[Team]) -> list[Team]:
     if not teams:
         return teams
 
-    # Normalize rankings: lower rank = better, so invert for scoring
-    max_net = max(t.net_ranking for t in teams) + 1
-    max_kenpom = max(t.kenpom_ranking for t in teams) + 1
-    max_sos = max(t.sos_ranking for t in teams) + 1
+    max_net = _max_rank(teams, "net_ranking")
+    max_kenpom = _max_rank(teams, "kenpom_ranking")
+    max_torvik = _max_rank(teams, "torvik_ranking")
+    max_sagarin = _max_rank(teams, "sagarin_ranking")
+    max_sos = _max_rank(teams, "sos_ranking")
 
     for team in teams:
         score = 0.0
 
-        # 1. NET ranking proxy (35% weight) - most important factor
-        if team.net_ranking < 999:
-            net_score = (max_net - team.net_ranking) / max_net * 100
+        component_scores = {
+            "net": normalize_rank(team.net_ranking, max_net, team.win_pct, 40),
+            "kenpom": normalize_rank(team.kenpom_ranking, max_kenpom, team.win_pct, 30),
+            "torvik": normalize_rank(team.torvik_ranking, max_torvik, team.win_pct, 25),
+            "sagarin": normalize_rank(team.sagarin_ranking, max_sagarin, team.win_pct, 25),
+            "win_pct": win_pct_score(team.win_pct),
+            "quality_wins": quality_wins_score(team),
+            "bad_losses": bad_losses_score(team),
+            "sos": sos_score(team, max_sos),
+            "conf_strength": conf_strength_score(team.conference),
+            "conf_standing": conf_standing_score(team.conference_standing),
+            "road_win_pct": road_win_pct_score(team),
+            "point_diff": point_diff_score(team),
+            "vs_ranked": vs_ranked_score(team),
+            "streak": streak_score(team),
+            "conf_win_pct": conf_win_pct_score(team),
+        }
+
+        for key, weight in RATING_WEIGHTS.items():
+            score += component_scores.get(key, 0.0) * weight
+
+        if team.is_power_conference:
+            score += P5_RATING_BONUS
         else:
-            # Unranked teams get a score based on record
-            net_score = team.win_pct * 40
-        score += net_score * 0.35
-
-        # 2. KenPom/coaches poll proxy (15% weight)
-        if team.kenpom_ranking < 999:
-            kp_score = (max_kenpom - team.kenpom_ranking) / max_kenpom * 100
-        else:
-            kp_score = team.win_pct * 30
-        score += kp_score * 0.15
-
-        # 3. Win percentage (15% weight)
-        score += team.win_pct * 100 * 0.15
-
-        # 4. Quality wins - Q1 (10% weight)
-        q1_bonus = team.quad1_wins * 4 - team.quad1_losses * 1
-        score += max(0, min(q1_bonus * 2, 100)) * 0.10
-
-        # 5. Q2 wins and avoiding bad losses (5% weight)
-        q2_bonus = team.quad2_wins * 2 - team.quad3_losses * 5 - team.quad4_losses * 10
-        score += max(0, min(50 + q2_bonus, 100)) * 0.05
-
-        # 6. Strength of schedule (10% weight)
-        if team.sos_ranking < 999:
-            sos_score = (max_sos - team.sos_ranking) / max_sos * 100
-        else:
-            # Power conference teams get SOS bump
-            sos_score = 60 if team.is_power_conference else 30
-        score += sos_score * 0.10
-
-        # 7. Conference strength bonus (5% weight)
-        if team.conference in ("SEC", "Big Ten", "Big 12"):
-            score += 80 * 0.05
-        elif team.conference in ("ACC", "Big East", "Pac-12"):
-            score += 65 * 0.05
-        elif team.conference in ("Mountain West", "American", "WCC", "Missouri Valley"):
-            score += 45 * 0.05
-        else:
-            score += 25 * 0.05
-
-        # 8. Conference standing bonus (5% weight)
-        if team.conference_standing <= 3:
-            standing_score = 90 - (team.conference_standing - 1) * 15
-        elif team.conference_standing <= 8:
-            standing_score = 50 - (team.conference_standing - 4) * 5
-        else:
-            standing_score = max(0, 30 - team.conference_standing)
-        score += standing_score * 0.05
+            score -= MID_MAJOR_RATING_PENALTY
 
         team.rating = round(score, 3)
 
@@ -93,6 +84,13 @@ def compute_ratings(teams: list[Team]) -> list[Team]:
     teams.sort(key=lambda t: t.rating, reverse=True)
 
     return teams
+
+
+def _max_rank(teams: list[Team], attr: str) -> int:
+    valid = [getattr(t, attr) for t in teams if getattr(t, attr) < 999]
+    if not valid:
+        return 999
+    return max(valid)
 
 
 def assign_seed_line(rank_position: int) -> int:

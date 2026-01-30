@@ -20,6 +20,8 @@ class Team:
     conf_losses: int = 0
     net_ranking: int = 999
     kenpom_ranking: int = 999
+    torvik_ranking: int = 999
+    sagarin_ranking: int = 999
     quad1_wins: int = 0
     quad1_losses: int = 0
     quad2_wins: int = 0
@@ -74,6 +76,8 @@ class Team:
             "win_pct": round(self.win_pct, 3),
             "net_ranking": self.net_ranking if self.net_ranking < 999 else None,
             "kenpom_ranking": self.kenpom_ranking if self.kenpom_ranking < 999 else None,
+            "torvik_ranking": self.torvik_ranking if self.torvik_ranking < 999 else None,
+            "sagarin_ranking": self.sagarin_ranking if self.sagarin_ranking < 999 else None,
             "sos_ranking": self.sos_ranking if self.sos_ranking < 999 else None,
             "conference_standing": self.conference_standing,
             "is_conference_champ": self.is_conference_champ,
@@ -212,6 +216,8 @@ def init_db():
         )
     """)
 
+    _ensure_team_columns(c)
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS game_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,6 +255,24 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def _ensure_team_columns(cursor: sqlite3.Cursor):
+    columns = [
+        "road_wins INTEGER DEFAULT 0",
+        "road_losses INTEGER DEFAULT 0",
+        "vs_ranked_record TEXT DEFAULT ''",
+        "streak TEXT DEFAULT ''",
+        "avg_points_for REAL DEFAULT 0.0",
+        "avg_points_against REAL DEFAULT 0.0",
+        "torvik_ranking INTEGER DEFAULT 999",
+        "sagarin_ranking INTEGER DEFAULT 999",
+    ]
+    for column in columns:
+        try:
+            cursor.execute(f"ALTER TABLE teams ADD COLUMN {column}")
+        except sqlite3.OperationalError:
+            continue
 
 
 def save_snapshot(bracket: Bracket, changes: list = None):
