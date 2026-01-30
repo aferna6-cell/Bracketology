@@ -12,6 +12,22 @@ python run.py
 By default the app runs on `http://127.0.0.1:5000`. You can override settings
 with environment variables (see `.env.example` for a template). 
 
+To ingest advanced metrics, set optional CSV URLs (headers should include a
+team name column and rank column, e.g. `team` + `rank`):
+
+```bash
+export NET_RANKINGS_URL="https://example.com/net.csv"
+export KENPOM_RANKINGS_URL="https://example.com/kenpom.csv"
+export TORVIK_RANKINGS_URL="https://example.com/torvik.csv"
+export SAGARIN_RANKINGS_URL="https://example.com/sagarin.csv"
+export MASSEY_COMPARE_URL="https://masseyratings.com/cb/compare.csv"
+```
+
+Defaults are provided for NET (via `ncaa-api.henrygd.me`) and Torvik
+(`https://barttorvik.com/YYYY_team_results.csv`, where `YYYY` is auto-resolved
+to the current season). Massey compare defaults to the public compare CSV for
+Sagarin-style ranks.
+
 ## Rating configuration
 
 The composite rating is built from weighted component scores in

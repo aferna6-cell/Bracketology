@@ -11,8 +11,10 @@ RATING_SCALE = 100.0
 
 # Component weights should sum to 1.0 for a 0-100 scale.
 RATING_WEIGHTS = {
-    "net": 0.28,
-    "kenpom": 0.12,
+    "net": 0.24,
+    "kenpom": 0.1,
+    "torvik": 0.08,
+    "sagarin": 0.06,
     "win_pct": 0.12,
     "quality_wins": 0.08,
     "bad_losses": 0.05,

@@ -43,6 +43,8 @@ def compute_ratings(teams: list[Team]) -> list[Team]:
 
     max_net = _max_rank(teams, "net_ranking")
     max_kenpom = _max_rank(teams, "kenpom_ranking")
+    max_torvik = _max_rank(teams, "torvik_ranking")
+    max_sagarin = _max_rank(teams, "sagarin_ranking")
     max_sos = _max_rank(teams, "sos_ranking")
 
     for team in teams:
@@ -51,6 +53,8 @@ def compute_ratings(teams: list[Team]) -> list[Team]:
         component_scores = {
             "net": normalize_rank(team.net_ranking, max_net, team.win_pct, 40),
             "kenpom": normalize_rank(team.kenpom_ranking, max_kenpom, team.win_pct, 30),
+            "torvik": normalize_rank(team.torvik_ranking, max_torvik, team.win_pct, 25),
+            "sagarin": normalize_rank(team.sagarin_ranking, max_sagarin, team.win_pct, 25),
             "win_pct": win_pct_score(team.win_pct),
             "quality_wins": quality_wins_score(team),
             "bad_losses": bad_losses_score(team),

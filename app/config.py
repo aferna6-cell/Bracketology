@@ -36,6 +36,16 @@ ESPN_RANKINGS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/me
 ESPN_STANDINGS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/standings"
 ESPN_TEAMS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams"
 
+# Optional advanced metric sources. Set via environment variables to override defaults.
+NET_RANKINGS_URL = os.getenv(
+    "NET_RANKINGS_URL",
+    "https://ncaa-api.henrygd.me/rankings/basketball-men/d1/ncaa-mens-basketball-net-rankings",
+)
+KENPOM_RANKINGS_URL = os.getenv("KENPOM_RANKINGS_URL", "")
+TORVIK_RANKINGS_URL = os.getenv("TORVIK_RANKINGS_URL", "https://barttorvik.com/YYYY_team_results.csv")
+SAGARIN_RANKINGS_URL = os.getenv("SAGARIN_RANKINGS_URL", "")
+MASSEY_COMPARE_URL = os.getenv("MASSEY_COMPARE_URL", "https://masseyratings.com/cb/compare.csv")
+
 # Request hardening
 SCOREBOARD_CACHE_TTL_SECONDS = 300
 REQUEST_RATE_LIMITS = {

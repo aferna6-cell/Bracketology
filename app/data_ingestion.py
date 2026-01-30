@@ -5,13 +5,20 @@ import sqlite3
 from datetime import datetime
 from time import monotonic
 
+import csv
+import io
 import requests
 
 from app.config import (
     DATABASE_PATH,
     ESPN_SCOREBOARD_URL,
     ESPN_TEAMS_URL,
+    KENPOM_RANKINGS_URL,
+    MASSEY_COMPARE_URL,
+    NET_RANKINGS_URL,
+    SAGARIN_RANKINGS_URL,
     SCOREBOARD_CACHE_TTL_SECONDS,
+    TORVIK_RANKINGS_URL,
 )
 from app.models import Team
 
@@ -225,7 +232,10 @@ def build_team_database():
 
     logger.info(f"Applied rankings to {ranked_count} teams")
 
-    # 3. Persist
+    # 3. Advanced metrics overlay (NET/KenPom/Torvik/Sagarin)
+    _apply_advanced_metrics(teams_dict)
+
+    # 4. Persist
     team_list = list(teams_dict.values())
     save_teams_to_db(team_list)
 
@@ -243,8 +253,8 @@ def save_teams_to_db(teams: list):
              quad2_wins, quad2_losses, quad3_losses, quad4_losses,
              sos_ranking, conference_standing, is_conference_champ, rating,
              road_wins, road_losses, vs_ranked_record, streak,
-             avg_points_for, avg_points_against)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_points_for, avg_points_against, torvik_ranking, sagarin_ranking)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             t.id, t.name, t.conference, t.wins, t.losses,
             t.conf_wins, t.conf_losses, t.net_ranking, t.kenpom_ranking,
@@ -252,7 +262,7 @@ def save_teams_to_db(teams: list):
             t.quad3_losses, t.quad4_losses, t.sos_ranking,
             t.conference_standing, int(t.is_conference_champ), t.rating,
             t.road_wins, t.road_losses, t.vs_ranked_record, t.streak,
-            t.avg_points_for, t.avg_points_against,
+            t.avg_points_for, t.avg_points_against, t.torvik_ranking, t.sagarin_ranking,
         ))
     conn.commit()
     conn.close()
@@ -268,7 +278,7 @@ def load_teams_from_db() -> list:
             quad2_wins, quad2_losses, quad3_losses, quad4_losses,
             sos_ranking, conference_standing, is_conference_champ, rating,
             road_wins, road_losses, vs_ranked_record, streak,
-            avg_points_for, avg_points_against
+            avg_points_for, avg_points_against, torvik_ranking, sagarin_ranking
         FROM teams
     """)
     rows = c.fetchall()
@@ -285,7 +295,132 @@ def load_teams_from_db() -> list:
         road_wins=r[19], road_losses=r[20],
         vs_ranked_record=r[21] or "", streak=r[22] or "",
         avg_points_for=r[23] or 0.0, avg_points_against=r[24] or 0.0,
+        torvik_ranking=r[25] or 999, sagarin_ranking=r[26] or 999,
     ) for r in rows]
+
+
+def _apply_advanced_metrics(teams_dict: dict[int, Team]) -> None:
+    sources = {
+        "net": NET_RANKINGS_URL,
+        "kenpom": KENPOM_RANKINGS_URL,
+        "torvik": _resolve_year_url(TORVIK_RANKINGS_URL),
+        "sagarin": SAGARIN_RANKINGS_URL,
+        "massey": MASSEY_COMPARE_URL,
+    }
+    name_map = {_normalize_name(t.name): t for t in teams_dict.values()}
+
+    for label, url in sources.items():
+        if not url:
+            continue
+        try:
+            if label == "net":
+                rankings = _fetch_net_rankings(url)
+            elif label == "massey":
+                rankings = _fetch_massey_rankings(url)
+            else:
+                rankings = _fetch_rankings_csv(url)
+        except Exception as exc:
+            logger.warning(f"Advanced metric fetch failed for {label}: {exc}")
+            continue
+        applied = 0
+        for team_name, rank in rankings.items():
+            team = name_map.get(_normalize_name(team_name))
+            if not team:
+                continue
+            if label == "net":
+                team.net_ranking = min(team.net_ranking, rank)
+            elif label == "kenpom":
+                team.kenpom_ranking = min(team.kenpom_ranking, rank)
+            elif label == "torvik":
+                team.torvik_ranking = min(team.torvik_ranking, rank)
+            elif label == "sagarin":
+                team.sagarin_ranking = min(team.sagarin_ranking, rank)
+            elif label == "massey":
+                team.sagarin_ranking = min(team.sagarin_ranking, rank)
+            applied += 1
+        logger.info(f"Applied {applied} {label} rankings from advanced metrics.")
+
+
+def _fetch_rankings_csv(url: str) -> dict[str, int]:
+    resp = requests.get(url, timeout=20)
+    resp.raise_for_status()
+    content = resp.text
+    reader = csv.DictReader(io.StringIO(content))
+    if not reader.fieldnames:
+        raise ValueError("CSV missing headers.")
+    team_field = _find_field(reader.fieldnames, ("team", "school", "name"))
+    rank_field = _find_field(reader.fieldnames, ("rank", "rating_rank", "rk"))
+    if not team_field or not rank_field:
+        raise ValueError(f"CSV missing team or rank columns: {reader.fieldnames}")
+    rankings = {}
+    for row in reader:
+        team_name = (row.get(team_field) or "").strip()
+        if not team_name:
+            continue
+        rank = _safe_int(row.get(rank_field), default=999)
+        if rank <= 0:
+            continue
+        rankings[team_name] = rank
+    return rankings
+
+
+def _fetch_net_rankings(url: str) -> dict[str, int]:
+    resp = requests.get(url, timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+    rankings = {}
+    for entry in data:
+        team_name = entry.get("team") or entry.get("name") or ""
+        rank = _safe_int(entry.get("rank"), default=999)
+        if team_name and rank > 0:
+            rankings[team_name] = rank
+    return rankings
+
+
+def _fetch_massey_rankings(url: str) -> dict[str, int]:
+    resp = requests.get(url, timeout=20)
+    resp.raise_for_status()
+    reader = csv.DictReader(io.StringIO(resp.text))
+    if not reader.fieldnames:
+        raise ValueError("Massey CSV missing headers.")
+    team_field = _find_field(reader.fieldnames, ("team", "school", "name"))
+    sag_field = _find_field(reader.fieldnames, ("sag", "sagarin"))
+    if not team_field or not sag_field:
+        raise ValueError(f"Massey CSV missing team or SAG columns: {reader.fieldnames}")
+    rankings = {}
+    for row in reader:
+        team_name = (row.get(team_field) or "").strip()
+        if not team_name:
+            continue
+        rank = _safe_int(row.get(sag_field), default=999)
+        if rank <= 0:
+            continue
+        rankings[team_name] = rank
+    return rankings
+
+
+def _find_field(fields: list[str], candidates: tuple[str, ...]) -> str | None:
+    for field in fields:
+        normalized = field.strip().lower().replace(" ", "").replace("_", "")
+        for candidate in candidates:
+            if normalized == candidate.replace(" ", "").replace("_", ""):
+                return field
+    return None
+
+
+def _normalize_name(name: str) -> str:
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _resolve_year_url(url: str) -> str:
+    if "YYYY" not in url:
+        return url
+    return url.replace("YYYY", str(_current_season_year()))
+
+
+def _current_season_year() -> int:
+    today = datetime.now()
+    return today.year + 1 if today.month >= 7 else today.year
 
 
 def fetch_scoreboard(date: str) -> list[dict]:
