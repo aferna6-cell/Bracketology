@@ -3,11 +3,14 @@
 import json
 import logging
 import threading
+from collections import deque
 from datetime import datetime, timedelta
+from time import monotonic
 from zoneinfo import ZoneInfo
 
 from flask import Flask, render_template, jsonify, request, Response
 
+from app.config import REQUEST_RATE_LIMITS
 from app.models import (
     init_db, get_latest_snapshot, get_snapshot_history, get_snapshot_by_id,
     get_watchlist, add_to_watchlist, remove_from_watchlist,
@@ -17,6 +20,7 @@ from app.update import run_update, get_current_bracket, get_all_teams
 from app.scheduler import start_scheduler
 
 logger = logging.getLogger(__name__)
+_rate_limit_buckets: dict[tuple[str, str], deque] = {}
 
 
 def create_app() -> Flask:
@@ -37,6 +41,8 @@ def create_app() -> Flask:
 
     @app.route("/api/update", methods=["POST"])
     def api_update():
+        if _is_rate_limited("update"):
+            return jsonify({"error": "Too many update requests. Please wait."}), 429
         result = run_update()
         return jsonify(result)
 
@@ -66,6 +72,12 @@ def create_app() -> Flask:
 
     @app.route("/api/scoreboard")
     def api_scoreboard():
+        if _is_rate_limited("scoreboard"):
+            return jsonify({
+                "date": _yesterday_key(),
+                "games": [],
+                "error": "Scoreboard rate limit exceeded. Try again shortly.",
+            }), 429
         date_param = request.args.get("date")
         date_key = date_param or _yesterday_key()
         if date_param and not _valid_scoreboard_date(date_param):
@@ -97,15 +109,25 @@ def create_app() -> Flask:
     # Watchlist
     @app.route("/api/watchlist")
     def api_watchlist():
+        if _is_rate_limited("watchlist"):
+            return jsonify({"error": "Too many watchlist requests."}), 429
         return jsonify(list(get_watchlist()))
 
     @app.route("/api/watchlist/<int:team_id>", methods=["POST"])
     def api_watchlist_add(team_id):
+        if _is_rate_limited("watchlist"):
+            return jsonify({"error": "Too many watchlist requests."}), 429
+        if not _team_exists(team_id):
+            return jsonify({"error": "Team not found"}), 404
         add_to_watchlist(team_id)
         return jsonify({"status": "ok"})
 
     @app.route("/api/watchlist/<int:team_id>", methods=["DELETE"])
     def api_watchlist_remove(team_id):
+        if _is_rate_limited("watchlist"):
+            return jsonify({"error": "Too many watchlist requests."}), 429
+        if not _team_exists(team_id):
+            return jsonify({"error": "Team not found"}), 404
         remove_from_watchlist(team_id)
         return jsonify({"status": "ok"})
 
@@ -113,13 +135,19 @@ def create_app() -> Flask:
     @app.route("/api/whatif", methods=["POST"])
     def api_whatif():
         """Simulate bracket changes by modifying a team's wins/losses."""
-        data = request.get_json() or {}
-        team_id = data.get("team_id")
-        add_wins = data.get("add_wins", 0)
-        add_losses = data.get("add_losses", 0)
+        if _is_rate_limited("whatif"):
+            return jsonify({"error": "Too many what-if requests."}), 429
+        data = request.get_json(silent=True) or {}
+        team_id = _safe_int(data.get("team_id"))
+        add_wins = _safe_int(data.get("add_wins", 0))
+        add_losses = _safe_int(data.get("add_losses", 0))
 
         if not team_id:
             return jsonify({"error": "Provide team_id"}), 400
+        if not _team_exists(team_id):
+            return jsonify({"error": "Team not found"}), 404
+        if add_wins < 0 or add_losses < 0 or add_wins > 10 or add_losses > 10:
+            return jsonify({"error": "Wins/losses must be between 0 and 10."}), 400
 
         import copy
         from app.bracket_generator import build_bracket
@@ -208,3 +236,38 @@ def _valid_scoreboard_date(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _client_identifier() -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def _is_rate_limited(endpoint_key: str) -> bool:
+    policy = REQUEST_RATE_LIMITS.get(endpoint_key)
+    if not policy:
+        return False
+    limit = policy["limit"]
+    window = policy["window_seconds"]
+    bucket_key = (endpoint_key, _client_identifier())
+    bucket = _rate_limit_buckets.setdefault(bucket_key, deque())
+    now = monotonic()
+    while bucket and now - bucket[0] > window:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        return True
+    bucket.append(now)
+    return False
+
+
+def _team_exists(team_id: int) -> bool:
+    return any(t.id == team_id for t in get_all_teams())

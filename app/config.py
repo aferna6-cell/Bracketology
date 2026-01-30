@@ -36,6 +36,15 @@ ESPN_RANKINGS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/me
 ESPN_STANDINGS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/standings"
 ESPN_TEAMS_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams"
 
+# Request hardening
+SCOREBOARD_CACHE_TTL_SECONDS = 300
+REQUEST_RATE_LIMITS = {
+    "scoreboard": {"limit": 30, "window_seconds": 60},
+    "update": {"limit": 2, "window_seconds": 300},
+    "whatif": {"limit": 20, "window_seconds": 60},
+    "watchlist": {"limit": 30, "window_seconds": 60},
+}
+
 # Update schedule
 # Normal: daily at 8am (handled by CronTrigger in scheduler.py)
 # March: hourly (handled by IntervalTrigger in scheduler.py)

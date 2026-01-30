@@ -3,13 +3,21 @@
 import logging
 import sqlite3
 from datetime import datetime
+from time import monotonic
 
 import requests
 
-from app.config import DATABASE_PATH, ESPN_SCOREBOARD_URL, ESPN_TEAMS_URL
+from app.config import (
+    DATABASE_PATH,
+    ESPN_SCOREBOARD_URL,
+    ESPN_TEAMS_URL,
+    SCOREBOARD_CACHE_TTL_SECONDS,
+)
 from app.models import Team
 
 logger = logging.getLogger(__name__)
+
+_scoreboard_cache: dict[str, tuple[float, list[dict]]] = {}
 
 # ESPN conference group IDs (Pac-12 removed - dissolved after 2023-24)
 CONFERENCE_IDS = {
@@ -282,6 +290,12 @@ def load_teams_from_db() -> list:
 
 def fetch_scoreboard(date: str) -> list[dict]:
     """Fetch the ESPN scoreboard for a given YYYYMMDD date."""
+    cache_entry = _scoreboard_cache.get(date)
+    if cache_entry:
+        cached_at, cached_games = cache_entry
+        if monotonic() - cached_at < SCOREBOARD_CACHE_TTL_SECONDS:
+            return cached_games
+
     games = []
     try:
         resp = requests.get(ESPN_SCOREBOARD_URL, params={"dates": date}, timeout=20)
@@ -328,6 +342,7 @@ def fetch_scoreboard(date: str) -> list[dict]:
             logger.warning(f"Failed to parse scoreboard event: {exc}")
             continue
 
+    _scoreboard_cache[date] = (monotonic(), games)
     return games
 
 

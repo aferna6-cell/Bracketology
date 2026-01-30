@@ -1,5 +1,17 @@
 # Bracketology
 
+## Quick start
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python run.py
+```
+
+By default the app runs on `http://127.0.0.1:5000`. You can override settings
+with environment variables (see `.env.example` for a template). 
+
 ## Rating configuration
 
 The composite rating is built from weighted component scores in
@@ -32,3 +44,7 @@ The response format is:
   ]
 }
 ```
+
+## Deployment readiness
+
+See `DEPLOYMENT.md` for a safe deployment checklist and hardening steps.
