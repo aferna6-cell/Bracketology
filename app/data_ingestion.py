@@ -2,6 +2,7 @@
 
 import logging
 import sqlite3
+from datetime import datetime
 
 import requests
 
@@ -232,14 +233,18 @@ def save_teams_to_db(teams: list):
             (id, name, conference, wins, losses, conf_wins, conf_losses,
              net_ranking, kenpom_ranking, quad1_wins, quad1_losses,
              quad2_wins, quad2_losses, quad3_losses, quad4_losses,
-             sos_ranking, conference_standing, is_conference_champ, rating)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             sos_ranking, conference_standing, is_conference_champ, rating,
+             road_wins, road_losses, vs_ranked_record, streak,
+             avg_points_for, avg_points_against)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             t.id, t.name, t.conference, t.wins, t.losses,
             t.conf_wins, t.conf_losses, t.net_ranking, t.kenpom_ranking,
             t.quad1_wins, t.quad1_losses, t.quad2_wins, t.quad2_losses,
             t.quad3_losses, t.quad4_losses, t.sos_ranking,
             t.conference_standing, int(t.is_conference_champ), t.rating,
+            t.road_wins, t.road_losses, t.vs_ranked_record, t.streak,
+            t.avg_points_for, t.avg_points_against,
         ))
     conn.commit()
     conn.close()
@@ -248,7 +253,16 @@ def save_teams_to_db(teams: list):
 def load_teams_from_db() -> list:
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
-    c.execute("SELECT * FROM teams")
+    c.execute("""
+        SELECT
+            id, name, conference, wins, losses, conf_wins, conf_losses,
+            net_ranking, kenpom_ranking, quad1_wins, quad1_losses,
+            quad2_wins, quad2_losses, quad3_losses, quad4_losses,
+            sos_ranking, conference_standing, is_conference_champ, rating,
+            road_wins, road_losses, vs_ranked_record, streak,
+            avg_points_for, avg_points_against
+        FROM teams
+    """)
     rows = c.fetchall()
     conn.close()
     return [Team(
@@ -260,4 +274,78 @@ def load_teams_from_db() -> list:
         quad3_losses=r[13], quad4_losses=r[14],
         sos_ranking=r[15], conference_standing=r[16],
         is_conference_champ=bool(r[17]), rating=r[18],
+        road_wins=r[19], road_losses=r[20],
+        vs_ranked_record=r[21] or "", streak=r[22] or "",
+        avg_points_for=r[23] or 0.0, avg_points_against=r[24] or 0.0,
     ) for r in rows]
+
+
+def fetch_scoreboard(date: str) -> list[dict]:
+    """Fetch the ESPN scoreboard for a given YYYYMMDD date."""
+    games = []
+    try:
+        resp = requests.get(ESPN_SCOREBOARD_URL, params={"dates": date}, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logger.error(f"Error fetching scoreboard for {date}: {exc}")
+        return games
+
+    for event in data.get("events", []):
+        try:
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+            competition = competitions[0]
+            competitors = competition.get("competitors", [])
+            home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+            away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+            if not home or not away:
+                logger.warning("Scoreboard event missing home/away data.")
+                continue
+
+            start_time = event.get("date") or competition.get("date") or ""
+            status = event.get("status", {}).get("type", {})
+            state = status.get("state")
+            if status.get("completed") or state == "post":
+                status_label = "Final"
+            elif state == "in":
+                status_label = "In Progress"
+            else:
+                status_label = "Scheduled"
+
+            games.append({
+                "id": event.get("id"),
+                "date": _format_event_date(start_time),
+                "status": status_label,
+                "start_time": start_time,
+                "home": _parse_competitor(home),
+                "away": _parse_competitor(away),
+                "conference_game": bool(competition.get("conferenceCompetition")),
+                "neutral_site": bool(competition.get("neutralSite")),
+            })
+        except Exception as exc:
+            logger.warning(f"Failed to parse scoreboard event: {exc}")
+            continue
+
+    return games
+
+
+def _parse_competitor(competitor: dict) -> dict:
+    team = competitor.get("team", {})
+    return {
+        "id": _safe_int(team.get("id", 0)),
+        "name": team.get("displayName") or team.get("name") or "Unknown",
+        "score": _safe_int(competitor.get("score", 0)),
+    }
+
+
+def _format_event_date(date_str: str) -> str:
+    if not date_str:
+        return ""
+    try:
+        clean = date_str.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(clean)
+        return parsed.date().isoformat()
+    except ValueError:
+        return date_str.split("T")[0]

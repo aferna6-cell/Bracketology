@@ -1,11 +1,14 @@
 // Bracketology - NCAA Tournament Projection App
 let _bracketData = null;
 let _watchlist = new Set();
+let _scoreboardData = [];
+let _scoreboardDateKey = null;
 
 document.addEventListener("DOMContentLoaded", () => {
     setupTabs();
     loadWatchlist();
     loadBracket();
+    initScoreboard();
 });
 
 // ─── Tabs ────────────────────────────────────────────────────
@@ -71,6 +74,9 @@ function renderAll(data) {
     renderP5Status(data.p5_status || {});
     renderConferences(data.conference_breakdown || {});
     populateWhatIfTeams(data);
+    if (_scoreboardData.length) {
+        renderScoreboard(_scoreboardData, _scoreboardDateKey);
+    }
 }
 
 // ─── Changes Banner ──────────────────────────────────────────
@@ -261,6 +267,172 @@ function renderConferences(breakdown) {
         </div>`;
     }
     container.innerHTML = html;
+}
+
+// ─── Scoreboard ──────────────────────────────────────────────
+function initScoreboard() {
+    const dateInput = document.getElementById("scoreboard-date");
+    const prevBtn = document.getElementById("scoreboard-prev");
+    const nextBtn = document.getElementById("scoreboard-next");
+    if (!dateInput || !prevBtn || !nextBtn) return;
+
+    dateInput.addEventListener("change", () => {
+        const dateKey = (dateInput.value || "").replace(/-/g, "");
+        loadScoreboard(dateKey);
+    });
+    prevBtn.addEventListener("click", () => shiftScoreboardDate(-1));
+    nextBtn.addEventListener("click", () => shiftScoreboardDate(1));
+    loadScoreboard();
+}
+
+function shiftScoreboardDate(delta) {
+    if (!_scoreboardDateKey) return;
+    const date = parseDateKey(_scoreboardDateKey);
+    date.setDate(date.getDate() + delta);
+    loadScoreboard(formatDateKey(date));
+}
+
+async function loadScoreboard(dateKey = null) {
+    const container = document.getElementById("scoreboard-list");
+    if (container) container.innerHTML = "<p class='info-text'>Loading scoreboard...</p>";
+    const url = dateKey ? `/api/scoreboard?date=${dateKey}` : "/api/scoreboard";
+
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        _scoreboardDateKey = data.date || dateKey;
+        _scoreboardData = data.games || [];
+        syncScoreboardDateInput(_scoreboardDateKey);
+        renderScoreboard(_scoreboardData, _scoreboardDateKey, data.error);
+    } catch (err) {
+        if (container) {
+            container.innerHTML = `<p class='info-text'>Scoreboard error: ${err.message}</p>`;
+        }
+    }
+}
+
+function renderScoreboard(games, dateKey, errorMessage = null) {
+    const container = document.getElementById("scoreboard-list");
+    if (!container) return;
+
+    if (errorMessage) {
+        container.innerHTML = `<p class='info-text'>${errorMessage}</p>`;
+        return;
+    }
+
+    if (!games.length) {
+        container.innerHTML = "<p class='info-text'>No games found for this date.</p>";
+        return;
+    }
+
+    const fieldTeams = getFieldTeamIds();
+    const ratingsMap = getRatingsMap();
+
+    const cards = games.map(game => {
+        const status = game.status || "Scheduled";
+        const home = game.home || {};
+        const away = game.away || {};
+        const isFinal = status === "Final";
+        const winner = isFinal ? getWinner(home, away) : null;
+        const upset = isFinal && isUpsetResult(home, away, ratingsMap);
+
+        return `<div class="scoreboard-card">
+            <div class="scoreboard-status">
+                <span class="status-text">${status}</span>
+                ${upset ? `<span class="scoreboard-badge upset">UPSET</span>` : ""}
+            </div>
+            <div class="scoreboard-team ${fieldTeams.has(away.id) ? "in-field" : ""}">
+                ${renderScoreboardTeam(away, winner)}
+                ${fieldTeams.has(away.id) ? `<span class="scoreboard-badge in">IN</span>` : ""}
+            </div>
+            <div class="scoreboard-team ${fieldTeams.has(home.id) ? "in-field" : ""}">
+                ${renderScoreboardTeam(home, winner)}
+                ${fieldTeams.has(home.id) ? `<span class="scoreboard-badge in">IN</span>` : ""}
+            </div>
+        </div>`;
+    }).join("");
+
+    container.innerHTML = cards;
+}
+
+function renderScoreboardTeam(team, winner) {
+    const name = team.name || "TBD";
+    const score = team.score !== undefined ? team.score : "-";
+    const winnerClass = winner && winner.id === team.id ? "winner" : "";
+    if (team.id) {
+        return `<button class="scoreboard-team-link ${winnerClass}" onclick="openTeamModal(${team.id})">
+            <span class="team-name">${name}</span>
+            <span class="team-score">${score}</span>
+        </button>`;
+    }
+    return `<div class="scoreboard-team-link ${winnerClass}">
+        <span class="team-name">${name}</span>
+        <span class="team-score">${score}</span>
+    </div>`;
+}
+
+function getWinner(home, away) {
+    if (home.score === undefined || away.score === undefined) return null;
+    if (home.score === away.score) return null;
+    return home.score > away.score ? home : away;
+}
+
+function isUpsetResult(home, away, ratingsMap) {
+    if (!ratingsMap.size) return false;
+    const homeRating = ratingsMap.get(home.id);
+    const awayRating = ratingsMap.get(away.id);
+    if (homeRating === undefined || awayRating === undefined) return false;
+    const winner = getWinner(home, away);
+    if (!winner) return false;
+    const loser = winner.id === home.id ? away : home;
+    const winnerRating = ratingsMap.get(winner.id);
+    const loserRating = ratingsMap.get(loser.id);
+    return winnerRating < loserRating;
+}
+
+function getFieldTeamIds() {
+    const ids = new Set();
+    if (!_bracketData) return ids;
+    for (const entries of Object.values(_bracketData.regions || {})) {
+        entries.forEach(e => ids.add(e.team_id));
+    }
+    for (const g of _bracketData.first_four || []) {
+        (g.game || []).forEach(e => { if (e) ids.add(e.team_id); });
+    }
+    return ids;
+}
+
+function getRatingsMap() {
+    const ratings = new Map();
+    if (!_bracketData) return ratings;
+    for (const entries of Object.values(_bracketData.regions || {})) {
+        entries.forEach(e => ratings.set(e.team_id, e.rating));
+    }
+    for (const g of _bracketData.first_four || []) {
+        (g.game || []).forEach(e => { if (e) ratings.set(e.team_id, e.rating); });
+    }
+    return ratings;
+}
+
+function syncScoreboardDateInput(dateKey) {
+    const dateInput = document.getElementById("scoreboard-date");
+    if (!dateInput || !dateKey) return;
+    const date = parseDateKey(dateKey);
+    dateInput.value = date.toISOString().slice(0, 10);
+}
+
+function parseDateKey(dateKey) {
+    const year = parseInt(dateKey.slice(0, 4));
+    const month = parseInt(dateKey.slice(4, 6)) - 1;
+    const day = parseInt(dateKey.slice(6, 8));
+    return new Date(year, month, day);
+}
+
+function formatDateKey(date) {
+    const y = date.getFullYear().toString();
+    const m = (date.getMonth() + 1).toString().padStart(2, "0");
+    const d = date.getDate().toString().padStart(2, "0");
+    return `${y}${m}${d}`;
 }
 
 // ─── What-If Simulator ───────────────────────────────────────
