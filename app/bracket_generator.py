@@ -20,6 +20,7 @@ from app.models import Team, BracketEntry, Bracket
 from app.config import (
     REGIONS, POWER_CONFERENCES, TOURNAMENT_FIELD_SIZE,
     FIRST_FOUR_AT_LARGE, FIRST_FOUR_AUTO_BID,
+    MAX_NON_P5_AT_LARGE,
 )
 from app.ratings import compute_ratings, assign_seed_line, classify_p5_team
 
@@ -53,8 +54,21 @@ def select_auto_bids(teams: list) -> list:
 def select_at_large(teams: list, auto_bid_ids: set, num_auto_bids: int) -> list:
     num_at_large = TOURNAMENT_FIELD_SIZE - num_auto_bids
     candidates = [t for t in teams if t.id not in auto_bid_ids]
-    candidates.sort(key=lambda t: t.rating, reverse=True)
-    return candidates[:num_at_large]
+    p5_candidates = [t for t in candidates if t.is_power_conference]
+    non_p5_candidates = [t for t in candidates if not t.is_power_conference]
+
+    p5_candidates.sort(key=lambda t: t.rating, reverse=True)
+    non_p5_candidates.sort(key=lambda t: t.rating, reverse=True)
+
+    max_non_p5 = min(MAX_NON_P5_AT_LARGE, num_at_large)
+    p5_target = max(0, num_at_large - max_non_p5)
+
+    selected = p5_candidates[:p5_target]
+
+    remaining = [t for t in p5_candidates[p5_target:]] + non_p5_candidates
+    remaining.sort(key=lambda t: t.rating, reverse=True)
+    selected.extend(remaining[: num_at_large - len(selected)])
+    return selected
 
 
 def build_conference_breakdown(teams: list, auto_bid_ids: set, at_large_ids: set,

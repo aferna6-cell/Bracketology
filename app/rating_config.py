@@ -15,17 +15,17 @@ RATING_WEIGHTS = {
     "kenpom": 0.1,
     "torvik": 0.08,
     "sagarin": 0.06,
-    "win_pct": 0.12,
+    "win_pct": 0.1,
     "quality_wins": 0.08,
     "bad_losses": 0.05,
-    "sos": 0.08,
+    "sos": 0.12,
     "conf_strength": 0.05,
-    "conf_standing": 0.05,
+    "conf_standing": 0.04,
     "road_win_pct": 0.04,
     "point_diff": 0.05,
     "vs_ranked": 0.03,
     "streak": 0.02,
-    "conf_win_pct": 0.03,
+    "conf_win_pct": 0.02,
 }
 
 POINT_DIFF_RANGE = (-15.0, 15.0)

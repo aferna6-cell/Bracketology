@@ -55,6 +55,9 @@ REQUEST_RATE_LIMITS = {
     "watchlist": {"limit": 30, "window_seconds": 60},
 }
 
+# Selection tuning
+MAX_NON_P5_AT_LARGE = 6
+
 # Update schedule
 # Normal: daily at 8am (handled by CronTrigger in scheduler.py)
 # March: hourly (handled by IntervalTrigger in scheduler.py)
